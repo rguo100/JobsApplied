@@ -12,7 +12,7 @@
     "identity"
   ],
   "oauth2": {
-    "client_id": "PASTE_YOUR_GOOGLE_OAUTH_CLIENT_ID_HERE.apps.googleusercontent.com",
+    "client_id": "428495047899-igshtbrlee4j1u9uhmpa92j5pifai48t.apps.googleusercontent.com",
     "scopes": [
       "openid",
       "https://www.googleapis.com/auth/userinfo.email",
