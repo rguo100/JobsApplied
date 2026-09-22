@@ -3,11 +3,10 @@ import {
   User,
   GoogleAuthProvider,
   signInWithCredential,
-  signInWithPopup,
   signOut,
   onAuthStateChanged,
 } from "firebase/auth";
-import { auth, googleProvider, isFirebaseConfigured } from "../firebase/config";
+import { auth, isFirebaseConfigured } from "../firebase/config";
 
 interface AuthContextType {
   user: User | null;
@@ -67,40 +66,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         chrome.identity &&
         typeof chrome.identity.getAuthToken === "function";
 
-      if (hasChromeIdentity) {
-        // --- Native Chrome Extension Google OAuth using chrome.identity.getAuthToken ---
-        const accessToken = await new Promise<string>((resolve, reject) => {
-          chrome.identity.getAuthToken({ interactive: true }, (token) => {
-            if (chrome.runtime?.lastError) {
-              const lastMsg = chrome.runtime.lastError.message || "OAuth error";
-              if (
-                lastMsg.toLowerCase().includes("canceled") ||
-                lastMsg.toLowerCase().includes("cancelled") ||
-                lastMsg.toLowerCase().includes("did not approve")
-              ) {
-                return reject(new Error("Sign-in was cancelled by user."));
-              }
-              return reject(new Error(lastMsg));
-            }
-
-            if (!token) {
-              return reject(new Error("No access token returned from Chrome Identity."));
-            }
-
-            resolve(token);
-          });
-        });
-
-        // Convert the returned Google OAuth2 access token to a Firebase Auth Credential
-        const credential = GoogleAuthProvider.credential(null, accessToken);
-        await signInWithCredential(authInstance, credential);
-      } else {
-        // --- Web Preview Fallback (only used when developing outside Chrome Extension) ---
-        if (!googleProvider) {
-          throw new Error("Google Auth Provider unavailable.");
-        }
-        await signInWithPopup(authInstance, googleProvider);
+      if (!hasChromeIdentity) {
+        throw new Error(
+          "Chrome Identity API is unavailable. Please run AppliedYet inside Google Chrome as an installed extension."
+        );
       }
+
+      // 1. Request OAuth2 access token via Chrome's native account manager
+      const accessToken = await new Promise<string>((resolve, reject) => {
+        chrome.identity.getAuthToken({ interactive: true }, (token) => {
+          if (chrome.runtime?.lastError) {
+            const lastMsg = chrome.runtime.lastError.message || "OAuth error";
+            if (
+              lastMsg.toLowerCase().includes("canceled") ||
+              lastMsg.toLowerCase().includes("cancelled") ||
+              lastMsg.toLowerCase().includes("did not approve")
+            ) {
+              return reject(new Error("Sign-in was cancelled by user."));
+            }
+            return reject(new Error(lastMsg));
+          }
+
+          if (!token) {
+            return reject(new Error("No access token returned from Chrome Identity."));
+          }
+
+          resolve(token);
+        });
+      });
+
+      // 2. Convert Google OAuth2 access token into a Firebase Auth Credential
+      // Static method GoogleAuthProvider.credential creates an in-memory OAuth credential
+      // without loading any remote gapi/apis.google.com scripts.
+      const credential = GoogleAuthProvider.credential(null, accessToken);
+      await signInWithCredential(authInstance, credential);
     } catch (err: unknown) {
       const authError = err as { code?: string; message?: string };
       console.warn("AppliedYet: Google sign-in error:", authError);
