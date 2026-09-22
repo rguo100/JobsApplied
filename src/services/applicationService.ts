@@ -6,6 +6,7 @@ import {
   deleteDoc,
   serverTimestamp,
   Timestamp,
+  WithFieldValue,
 } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "../firebase/config";
 import { Application, ApplicationStatus, getApplicationDocId } from "../types/application";
@@ -68,9 +69,11 @@ export async function saveApplication(
   try {
     const docRef = getApplicationDocRef(uid, application.source, application.externalJobId);
     const existingSnap = await getDoc(docRef);
+    const existingApplication = existingSnap.exists()
+      ? (existingSnap.data() as Application)
+      : null;
 
-    const now = Timestamp.now();
-    const payload: Application = {
+    const payload: WithFieldValue<Application> = {
       source: application.source,
       externalJobId: application.externalJobId,
       company: application.company,
@@ -78,9 +81,12 @@ export async function saveApplication(
       location: application.location,
       url: application.url,
       status: application.status,
-      appliedAt: application.status === "applied" ? (application.appliedAt || now) : null,
-      createdAt: existingSnap.exists() ? (existingSnap.data().createdAt || now) : now,
-      updatedAt: now,
+      appliedAt:
+        application.status === "applied"
+          ? application.appliedAt || existingApplication?.appliedAt || serverTimestamp()
+          : null,
+      createdAt: existingApplication?.createdAt || serverTimestamp(),
+      updatedAt: serverTimestamp(),
     };
 
     await setDoc(docRef, payload, { merge: true });
@@ -105,14 +111,13 @@ export async function updateApplicationStatus(
 
   try {
     const docRef = getApplicationDocRef(uid, source, externalJobId);
-    const now = Timestamp.now();
-    const updates: Partial<Application> = {
+    const updates: WithFieldValue<Partial<Application>> = {
       status,
-      updatedAt: now,
+      updatedAt: serverTimestamp(),
     };
 
     if (status === "applied") {
-      updates.appliedAt = now;
+      updates.appliedAt = serverTimestamp();
     }
 
     await updateDoc(docRef, updates as Record<string, unknown>);

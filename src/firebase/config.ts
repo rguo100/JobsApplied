@@ -1,5 +1,8 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
-import { getAuth, Auth } from "firebase/auth";
+// MV3 extension pages must use Firebase's extension-specific Auth entry point.
+// It initializes Auth with IndexedDB persistence and excludes browser popup/
+// redirect dependencies that are incompatible with extension CSP.
+import { getAuth, Auth } from "firebase/auth/web-extension";
 import { getFirestore, Firestore } from "firebase/firestore";
 
 // Read Firebase Web configuration from Vite environment variables
@@ -33,9 +36,14 @@ try {
     app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
+    console.info("[AppliedYet Auth] Firebase initialized", {
+      projectId: app.options.projectId,
+      authDomain: app.options.authDomain,
+      authPersistence: "indexedDBLocalPersistence (web-extension default)",
+    });
   }
 } catch (err) {
-  console.warn("AppliedYet: Firebase initialization error:", err);
+  console.error("[AppliedYet Auth] Firebase initialization failed", err);
 }
 
 export { app, auth, db };

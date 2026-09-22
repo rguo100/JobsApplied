@@ -5,7 +5,7 @@ import {
   signInWithCredential,
   signOut,
   onAuthStateChanged,
-} from "firebase/auth";
+} from "firebase/auth/web-extension";
 import { auth, isFirebaseConfigured } from "../firebase/config";
 
 interface AuthContextType {
@@ -19,6 +19,35 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const AUTH_DIAGNOSTIC_KEY = "appliedyet.auth.lastDiagnostic";
+
+type AuthDiagnosticDetails = Record<string, string | number | boolean | null | undefined>;
+
+function describeError(err: unknown): AuthDiagnosticDetails {
+  if (!(err instanceof Error) && (typeof err !== "object" || err === null)) {
+    return { message: String(err) };
+  }
+
+  const candidate = err as Error & { code?: string; customData?: { email?: string } };
+  return {
+    name: candidate.name,
+    code: candidate.code,
+    message: candidate.message,
+    email: candidate.customData?.email,
+  };
+}
+
+/** Persist only stage metadata so a popup teardown cannot erase the evidence. */
+function recordAuthDiagnostic(stage: string, details: AuthDiagnosticDetails = {}): void {
+  const diagnostic = { stage, at: new Date().toISOString(), ...details };
+  console.info(`[AppliedYet Auth] ${stage}`, details);
+  try {
+    localStorage.setItem(AUTH_DIAGNOSTIC_KEY, JSON.stringify(diagnostic));
+  } catch {
+    // Console output remains available if extension storage is unavailable.
+  }
+}
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -34,25 +63,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
    * Helper to silently exchange a Google access token with Firebase
    */
   const authenticateWithToken = async (accessToken: string, source: "silent_sync" | "interactive") => {
-    if (!auth) return;
+    if (!auth) {
+      recordAuthDiagnostic("firebase_auth_unavailable", { source });
+      throw new Error("Firebase Auth was not initialized. Check the earlier initialization error.");
+    }
     if (isAuthenticatingRef.current) {
+      recordAuthDiagnostic("firebase_exchange_skipped_already_running", { source });
       return;
     }
 
     try {
       isAuthenticatingRef.current = true;
-      console.log(`[AppliedYet Auth] Completing Firebase sign-in (via ${source})`);
-
+      recordAuthDiagnostic("firebase_credential_creating", { source });
       const credential = GoogleAuthProvider.credential(null, accessToken);
-      await signInWithCredential(auth, credential);
+      recordAuthDiagnostic("firebase_credential_created", {
+        source,
+        providerId: credential.providerId,
+        signInMethod: credential.signInMethod,
+      });
 
-      console.log("[AppliedYet Auth] Firebase sign-in completed");
+      recordAuthDiagnostic("firebase_sign_in_started", { source });
+      const result = await signInWithCredential(auth, credential);
+      recordAuthDiagnostic("firebase_sign_in_succeeded", {
+        source,
+        uid: result.user.uid,
+        providerId: result.providerId,
+      });
     } catch (err: unknown) {
-      const fbError = err as Error;
-      console.error("[AppliedYet Auth] Firebase signInWithCredential failed:", fbError.message);
-      if (source === "interactive") {
-        setError(fbError.message || "Failed to sign in with Google credential.");
-      }
+      const details = describeError(err);
+      recordAuthDiagnostic("firebase_sign_in_failed", { source, ...details });
+      console.error("[AppliedYet Auth] Firebase signInWithCredential failed", details, err);
+      setError(
+        `${details.code ? `${details.code}: ` : ""}${details.message || "Failed to sign in with Google credential."}`
+      );
+      throw err;
     } finally {
       isAuthenticatingRef.current = false;
     }
@@ -71,23 +115,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return resolve(null);
       }
 
-      console.log("[AppliedYet Auth] Checking Chrome cached token");
+      recordAuthDiagnostic("chrome_silent_token_requested", {
+        extensionId: chrome.runtime?.id,
+      });
 
       chrome.identity.getAuthToken({ interactive: false }, (token) => {
         // Handle runtime errors gracefully (e.g. no cached token available)
         if (chrome.runtime?.lastError || !token) {
-          console.log("[AppliedYet Auth] No cached Google token");
+          recordAuthDiagnostic("chrome_silent_token_unavailable", {
+            message: chrome.runtime?.lastError?.message || "No cached token returned",
+          });
           return resolve(null);
         }
 
-        console.log("[AppliedYet Auth] Cached Google token found");
+        recordAuthDiagnostic("chrome_silent_token_received");
         resolve(token);
       });
     });
   };
 
   useEffect(() => {
+    try {
+      const previousDiagnostic = localStorage.getItem(AUTH_DIAGNOSTIC_KEY);
+      if (previousDiagnostic) {
+        console.info("[AppliedYet Auth] Previous popup diagnostic", JSON.parse(previousDiagnostic));
+      }
+    } catch {
+      // Diagnostic recovery must never block Auth startup.
+    }
+
     if (!isConfigured || !auth) {
+      recordAuthDiagnostic("firebase_startup_unavailable", {
+        isConfigured,
+        authInitialized: Boolean(auth),
+      });
       setLoading(false);
       return;
     }
@@ -96,12 +157,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       auth,
       async (currentUser) => {
         if (currentUser) {
-          console.log("[AppliedYet Auth] Firebase initial state: signed-in");
+          recordAuthDiagnostic("firebase_auth_state_signed_in", { uid: currentUser.uid });
           setUser(currentUser);
           setLoading(false);
           setError(null);
         } else {
-          console.log("[AppliedYet Auth] Firebase initial state: signed-out");
+          recordAuthDiagnostic("firebase_auth_state_signed_out");
           setUser(null);
 
           // If this is the initial mount and Firebase is not signed in,
@@ -111,7 +172,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             const cachedToken = await checkChromeCachedToken();
 
             if (cachedToken) {
-              await authenticateWithToken(cachedToken, "silent_sync");
+              try {
+                await authenticateWithToken(cachedToken, "silent_sync");
+              } catch {
+                // authenticateWithToken already records and displays the exact Firebase error.
+              }
             }
           }
 
@@ -119,7 +184,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       },
       (err) => {
-        console.error("AppliedYet: Auth state error:", err);
+        recordAuthDiagnostic("firebase_auth_state_failed", describeError(err));
+        console.error("[AppliedYet Auth] Auth state observer failed", err);
         setError(err.message || "Failed to determine authentication state.");
         setLoading(false);
       }
@@ -154,10 +220,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       // Launch interactive Chrome Account Picker
+      recordAuthDiagnostic("chrome_interactive_token_requested", {
+        extensionId: chrome.runtime?.id,
+      });
       const accessToken = await new Promise<string>((resolve, reject) => {
         chrome.identity.getAuthToken({ interactive: true }, (token) => {
           if (chrome.runtime?.lastError) {
             const lastMsg = chrome.runtime.lastError.message || "OAuth error";
+            recordAuthDiagnostic("chrome_interactive_token_failed", { message: lastMsg });
             if (
               lastMsg.toLowerCase().includes("canceled") ||
               lastMsg.toLowerCase().includes("cancelled") ||
@@ -169,9 +239,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           }
 
           if (!token) {
+            recordAuthDiagnostic("chrome_interactive_token_failed", {
+              message: "No access token returned from Chrome Identity",
+            });
             return reject(new Error("No access token returned from Chrome Identity."));
           }
 
+          recordAuthDiagnostic("chrome_interactive_token_received");
           resolve(token);
         });
       });
@@ -180,12 +254,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await authenticateWithToken(accessToken, "interactive");
     } catch (err: unknown) {
       const authError = err as { code?: string; message?: string };
-      console.warn("AppliedYet: Google sign-in error:", authError);
+      console.error("[AppliedYet Auth] Google sign-in failed", describeError(err), err);
 
       if (authError.message?.includes("cancelled") || authError.message?.includes("closed")) {
         setError("Sign-in was cancelled.");
       } else {
-        setError(authError.message || "Failed to sign in with Google.");
+        setError(
+          `${authError.code ? `${authError.code}: ` : ""}${authError.message || "Failed to sign in with Google."}`
+        );
       }
     } finally {
       setLoading(false);

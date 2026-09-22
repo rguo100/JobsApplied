@@ -1,5 +1,55 @@
 import { Job } from "../types/job";
 
+const DETAIL_PANE_SELECTORS = [
+  ".jobs-details__main-content",
+  ".job-view-layout",
+  ".scaffold-layout__detail",
+  ".jobs-search__job-details--container",
+  ".jobs-search__job-details",
+  ".job-details-jobs-unified-top-card",
+  "[data-view-name='job-details']",
+  "#job-details",
+  ".jobs-search-results-list__detail-pane",
+  ".jobs-search-two-pane__detail",
+  "main",
+] as const;
+
+const LOCATION_DIRECT_SELECTORS = [
+  "[data-anonymize='job-location']",
+  ".job-details-jobs-unified-top-card__primary-description-container .tvm__text",
+  ".job-details-jobs-unified-top-card__primary-description span.tvm__text",
+  ".jobs-unified-top-card__subtitle-secondary-grouping span",
+  ".jobs-unified-top-card__subtitle-secondary-grouping",
+  ".jobs-unified-top-card__bullet + span",
+  ".topcard__flavor--bullet",
+  ".top-card-layout__first-subline .topcard__flavor:not(a)",
+  ".job-details-jobs-unified-top-card__tertiary-description",
+  "[class*='job-details'] [class*='location']",
+  "[class*='top-card'] [class*='location']",
+] as const;
+
+const LOCATION_CONTAINER_SELECTORS = [
+  ".job-details-jobs-unified-top-card__primary-description-container",
+  ".job-details-jobs-unified-top-card__primary-description",
+  ".jobs-unified-top-card__primary-description-container",
+  ".jobs-unified-top-card__primary-description",
+  ".jobs-details__main-content .job-details-jobs-unified-top-card__primary-description",
+  ".job-details-jobs-unified-top-card",
+  ".top-card-layout__first-subline",
+] as const;
+
+const TITLE_SELECTORS = [
+  "h1.job-details-jobs-unified-top-card__job-title",
+  "h1.jobs-unified-top-card__job-title",
+  ".job-details-jobs-unified-top-card__job-title",
+  ".jobs-details__main-content h1",
+  ".job-view-layout h1",
+  "h2.topcard__title",
+  "h1.top-card-layout__title",
+  "h1[tabindex='-1']",
+  "h1",
+] as const;
+
 /**
  * Normalizes text by removing redundant whitespace and trimming.
  */
@@ -17,21 +67,7 @@ export function normalizeText(text: string | null | undefined): string {
  * and prevent picking elements from other job cards in the search-results list.
  */
 export function getActiveDetailPane(doc: Document = document): Element | null {
-  const containerSelectors = [
-    ".jobs-details__main-content",
-    ".job-view-layout",
-    ".scaffold-layout__detail",
-    ".jobs-search__job-details--container",
-    ".jobs-search__job-details",
-    ".job-details-jobs-unified-top-card",
-    "[data-view-name='job-details']",
-    "#job-details",
-    ".jobs-search-results-list__detail-pane",
-    ".jobs-search-two-pane__detail",
-    "main",
-  ];
-
-  for (const selector of containerSelectors) {
+  for (const selector of DETAIL_PANE_SELECTORS) {
     const el = doc.querySelector(selector);
     if (el) return el;
   }
@@ -83,19 +119,7 @@ export function extractLinkedInJobId(currentUrl: string, doc: Document = documen
 export function extractTitle(doc: Document = document, detailPane: Element | null = null): string {
   const scope = detailPane || doc;
 
-  const selectors = [
-    "h1.job-details-jobs-unified-top-card__job-title",
-    "h1.jobs-unified-top-card__job-title",
-    ".job-details-jobs-unified-top-card__job-title",
-    ".jobs-details__main-content h1",
-    ".job-view-layout h1",
-    "h2.topcard__title",
-    "h1.top-card-layout__title",
-    "h1[tabindex='-1']",
-    "h1",
-  ];
-
-  for (const selector of selectors) {
+  for (const selector of TITLE_SELECTORS) {
     const el = scope.querySelector(selector);
     const text = normalizeText(el?.textContent);
     if (
@@ -312,26 +336,13 @@ export function extractLocationFromMetadataLine(rawText: string, companyName: st
 export function extractLocation(
   doc: Document = document,
   detailPane: Element | null = null,
-  companyName: string = ""
+  companyName: string = "",
+  activeJobId: string = ""
 ): string {
   const scope = detailPane || doc;
 
   // 1. Direct and specific location selectors
-  const directSelectors = [
-    "[data-anonymize='job-location']",
-    ".job-details-jobs-unified-top-card__primary-description-container .tvm__text",
-    ".job-details-jobs-unified-top-card__primary-description span.tvm__text",
-    ".jobs-unified-top-card__subtitle-secondary-grouping span",
-    ".jobs-unified-top-card__subtitle-secondary-grouping",
-    ".jobs-unified-top-card__bullet + span",
-    ".topcard__flavor--bullet",
-    ".top-card-layout__first-subline .topcard__flavor:not(a)",
-    ".job-details-jobs-unified-top-card__tertiary-description",
-    "[class*='job-details'] [class*='location']",
-    "[class*='top-card'] [class*='location']",
-  ];
-
-  for (const selector of directSelectors) {
+  for (const selector of LOCATION_DIRECT_SELECTORS) {
     const elements = scope.querySelectorAll(selector);
     for (const el of elements) {
       const rawText = el.textContent || "";
@@ -343,17 +354,7 @@ export function extractLocation(
   }
 
   // 2. Primary description containers (often contain company, location, date, applicants)
-  const containerSelectors = [
-    ".job-details-jobs-unified-top-card__primary-description-container",
-    ".job-details-jobs-unified-top-card__primary-description",
-    ".jobs-unified-top-card__primary-description-container",
-    ".jobs-unified-top-card__primary-description",
-    ".jobs-details__main-content .job-details-jobs-unified-top-card__primary-description",
-    ".job-details-jobs-unified-top-card",
-    ".top-card-layout__first-subline",
-  ];
-
-  for (const selector of containerSelectors) {
+  for (const selector of LOCATION_CONTAINER_SELECTORS) {
     const container = scope.querySelector(selector);
     if (container) {
       // First try any child spans
@@ -372,6 +373,34 @@ export function extractLocation(
       if (parsed) {
         return parsed;
       }
+    }
+  }
+
+  // 3. Generated-class LinkedIn variant: anchor traversal to the ACTIVE job's
+  // canonical link, then inspect <p> siblings only within its nearest header.
+  if (/^\d+$/.test(activeJobId)) {
+    const activeJobLink = scope.querySelector(
+      `a[href*="/jobs/view/${activeJobId}/"]`
+    );
+    const metadataMarker = /(?:\breposted\b|\b\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago\b|\bapplicants?\b|\bpeople\s+clicked\s+apply\b)/i;
+
+    let headerCandidate = activeJobLink?.parentElement || null;
+    while (headerCandidate && headerCandidate !== scope) {
+      const metadataParagraphs = Array.from(headerCandidate.querySelectorAll("p"))
+        .filter((paragraph) => !paragraph.contains(activeJobLink!))
+        .map((paragraph) => normalizeText(paragraph.textContent))
+        .filter((text) => metadataMarker.test(text))
+        .sort((a, b) => a.length - b.length);
+
+      if (metadataParagraphs.length > 0) {
+        const parsed = extractLocationFromMetadataLine(metadataParagraphs[0], companyName);
+        if (parsed) return parsed;
+        // The nearest active-job header had a metadata paragraph. Do not
+        // broaden to an outer container that could include result-list cards.
+        break;
+      }
+
+      headerCandidate = headerCandidate.parentElement;
     }
   }
 
@@ -414,7 +443,7 @@ export function extractLinkedInJob(
 
   const title = extractTitle(doc, detailPane);
   const company = extractCompany(doc, detailPane);
-  const location = extractLocation(doc, detailPane, company);
+  const location = extractLocation(doc, detailPane, company, jobId);
   const canonicalUrl = buildCanonicalUrl(jobId, currentUrl);
 
   return {

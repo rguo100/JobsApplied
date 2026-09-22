@@ -13,6 +13,44 @@ interface TestCase {
   run: () => void;
 }
 
+class FixtureElement {
+  textContent: string;
+  parentElement: FixtureElement | null = null;
+  private queryOne = new Map<string, FixtureElement>();
+  private queryMany = new Map<string, FixtureElement[]>();
+
+  constructor(textContent = "") {
+    this.textContent = textContent;
+  }
+
+  setQuery(selector: string, element: FixtureElement): this {
+    this.queryOne.set(selector, element);
+    return this;
+  }
+
+  setQueryAll(selector: string, elements: FixtureElement[]): this {
+    this.queryMany.set(selector, elements);
+    return this;
+  }
+
+  querySelector(selector: string): FixtureElement | null {
+    return this.queryOne.get(selector) || this.queryMany.get(selector)?.[0] || null;
+  }
+
+  querySelectorAll(selector: string): FixtureElement[] {
+    return this.queryMany.get(selector) || [];
+  }
+
+  contains(element: FixtureElement): boolean {
+    let current: FixtureElement | null = element;
+    while (current) {
+      if (current === this) return true;
+      current = current.parentElement;
+    }
+    return false;
+  }
+}
+
 const tests: TestCase[] = [
   {
     name: "Scenario A: Affirm - Software Engineer II - Victoria, BC (Remote)",
@@ -71,6 +109,88 @@ const tests: TestCase[] = [
       const location = extractLocationFromMetadataLine(metadata, "Acme");
       if (location !== null) {
         throw new Error(`Expected null for pure noise metadata, got '${location}'`);
+      }
+    },
+  },
+  {
+    name: "Montreal DOM variant: known top-card location selector remains supported",
+    run: () => {
+      const root = new FixtureElement();
+      const locationLine = new FixtureElement("Montreal, QC · 1 week ago · 23 applicants");
+      root.setQueryAll(".job-details-jobs-unified-top-card__primary-description-container .tvm__text", [
+        locationLine,
+      ]);
+
+      const location = extractLocation({} as Document, root as unknown as Element, "Cisco");
+      if (location !== "Montreal, QC") {
+        throw new Error(`Expected Montreal DOM fixture to yield 'Montreal, QC', got '${location}'`);
+      }
+    },
+  },
+  {
+    name: "Active-job link fixture: Greater St. John's metadata is found without selecting decoy cards",
+    run: () => {
+      const activeRoot = new FixtureElement();
+      const header = new FixtureElement();
+      const titleParagraph = new FixtureElement("Software Engineer II");
+      const activeJobLink = new FixtureElement("Software Engineer II");
+      const metadata = new FixtureElement(
+        "Greater St. John's Metropolitan Area · 2 weeks ago · 27 people clicked apply"
+      );
+      const leftToronto = new FixtureElement("Toronto, ON · 3 days ago · 20 people clicked apply");
+      const leftCalgary = new FixtureElement("Calgary, AB · 4 days ago · 10 people clicked apply");
+
+      activeJobLink.parentElement = titleParagraph;
+      titleParagraph.parentElement = header;
+      metadata.parentElement = header;
+      header.parentElement = activeRoot;
+      activeRoot.setQuery('a[href*="/jobs/view/4462333845/"]', activeJobLink);
+      header.setQueryAll("p", [titleParagraph, metadata]);
+
+      // Decoys exist in the broader page/detail workspace, but not in the
+      // active link's nearest header container.
+      activeRoot.setQueryAll("p", [titleParagraph, metadata, leftToronto, leftCalgary]);
+
+      const location = extractLocation(
+        {} as Document,
+        activeRoot as unknown as Element,
+        "Affirm",
+        "4462333845"
+      );
+      if (location !== "Greater St. John's Metropolitan Area") {
+        throw new Error(
+          `Expected active-job fixture to yield Greater St. John's Metropolitan Area, got '${location}'`
+        );
+      }
+    },
+  },
+  {
+    name: "Active-job link fixture: Ottawa reposted metadata is parsed from the same header",
+    run: () => {
+      const activeRoot = new FixtureElement();
+      const header = new FixtureElement();
+      const titleParagraph = new FixtureElement("Software Developer");
+      const activeJobLink = new FixtureElement("Software Developer");
+      const metadata = new FixtureElement("Ottawa, ON · Reposted 4 days ago · 78 people clicked apply");
+      const leftToronto = new FixtureElement("Toronto, ON · 3 days ago · 20 people clicked apply");
+      const leftCalgary = new FixtureElement("Calgary, AB · 4 days ago · 10 applicants");
+
+      activeJobLink.parentElement = titleParagraph;
+      titleParagraph.parentElement = header;
+      metadata.parentElement = header;
+      header.parentElement = activeRoot;
+      activeRoot.setQuery('a[href*="/jobs/view/4460177757/"]', activeJobLink);
+      header.setQueryAll("p", [titleParagraph, metadata]);
+      activeRoot.setQueryAll("p", [titleParagraph, metadata, leftToronto, leftCalgary]);
+
+      const location = extractLocation(
+        {} as Document,
+        activeRoot as unknown as Element,
+        "Cisco",
+        "4460177757"
+      );
+      if (location !== "Ottawa, ON") {
+        throw new Error(`Expected active-job fixture to yield 'Ottawa, ON', got '${location}'`);
       }
     },
   },
