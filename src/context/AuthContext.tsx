@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react";
 import {
   User,
   GoogleAuthProvider,
@@ -26,6 +26,66 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [error, setError] = useState<string | null>(null);
   const isConfigured = isFirebaseConfigured();
 
+  // Guard ref to prevent race conditions and duplicate concurrent sign-ins
+  const isAuthenticatingRef = useRef<boolean>(false);
+  const initialSyncAttemptedRef = useRef<boolean>(false);
+
+  /**
+   * Helper to silently exchange a Google access token with Firebase
+   */
+  const authenticateWithToken = async (accessToken: string, source: "silent_sync" | "interactive") => {
+    if (!auth) return;
+    if (isAuthenticatingRef.current) {
+      return;
+    }
+
+    try {
+      isAuthenticatingRef.current = true;
+      console.log(`[AppliedYet Auth] Completing Firebase sign-in (via ${source})`);
+
+      const credential = GoogleAuthProvider.credential(null, accessToken);
+      await signInWithCredential(auth, credential);
+
+      console.log("[AppliedYet Auth] Firebase sign-in completed");
+    } catch (err: unknown) {
+      const fbError = err as Error;
+      console.error("[AppliedYet Auth] Firebase signInWithCredential failed:", fbError.message);
+      if (source === "interactive") {
+        setError(fbError.message || "Failed to sign in with Google credential.");
+      }
+    } finally {
+      isAuthenticatingRef.current = false;
+    }
+  };
+
+  /**
+   * Helper to check Chrome's native identity cache non-interactively
+   */
+  const checkChromeCachedToken = (): Promise<string | null> => {
+    return new Promise((resolve) => {
+      if (
+        typeof chrome === "undefined" ||
+        !chrome.identity ||
+        typeof chrome.identity.getAuthToken !== "function"
+      ) {
+        return resolve(null);
+      }
+
+      console.log("[AppliedYet Auth] Checking Chrome cached token");
+
+      chrome.identity.getAuthToken({ interactive: false }, (token) => {
+        // Handle runtime errors gracefully (e.g. no cached token available)
+        if (chrome.runtime?.lastError || !token) {
+          console.log("[AppliedYet Auth] No cached Google token");
+          return resolve(null);
+        }
+
+        console.log("[AppliedYet Auth] Cached Google token found");
+        resolve(token);
+      });
+    });
+  };
+
   useEffect(() => {
     if (!isConfigured || !auth) {
       setLoading(false);
@@ -34,10 +94,29 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const unsubscribe = onAuthStateChanged(
       auth,
-      (currentUser) => {
-        setUser(currentUser);
-        setLoading(false);
-        setError(null);
+      async (currentUser) => {
+        if (currentUser) {
+          console.log("[AppliedYet Auth] Firebase initial state: signed-in");
+          setUser(currentUser);
+          setLoading(false);
+          setError(null);
+        } else {
+          console.log("[AppliedYet Auth] Firebase initial state: signed-out");
+          setUser(null);
+
+          // If this is the initial mount and Firebase is not signed in,
+          // perform silent synchronization check against Chrome's token cache
+          if (!initialSyncAttemptedRef.current && !isAuthenticatingRef.current) {
+            initialSyncAttemptedRef.current = true;
+            const cachedToken = await checkChromeCachedToken();
+
+            if (cachedToken) {
+              await authenticateWithToken(cachedToken, "silent_sync");
+            }
+          }
+
+          setLoading(false);
+        }
       },
       (err) => {
         console.error("AppliedYet: Auth state error:", err);
@@ -56,11 +135,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return;
     }
 
-    const authInstance = auth;
+    if (isAuthenticatingRef.current) {
+      return;
+    }
+
     setLoading(true);
 
     try {
-      // Check if running inside Chrome Extension environment with Chrome Identity API
       const hasChromeIdentity =
         typeof chrome !== "undefined" &&
         chrome.identity &&
@@ -72,7 +153,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         );
       }
 
-      // 1. Request OAuth2 access token via Chrome's native account manager
+      // Launch interactive Chrome Account Picker
       const accessToken = await new Promise<string>((resolve, reject) => {
         chrome.identity.getAuthToken({ interactive: true }, (token) => {
           if (chrome.runtime?.lastError) {
@@ -95,11 +176,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
       });
 
-      // 2. Convert Google OAuth2 access token into a Firebase Auth Credential
-      // Static method GoogleAuthProvider.credential creates an in-memory OAuth credential
-      // without loading any remote gapi/apis.google.com scripts.
-      const credential = GoogleAuthProvider.credential(null, accessToken);
-      await signInWithCredential(authInstance, credential);
+      // If the popup survived the interactive prompt, complete sign-in immediately
+      await authenticateWithToken(accessToken, "interactive");
     } catch (err: unknown) {
       const authError = err as { code?: string; message?: string };
       console.warn("AppliedYet: Google sign-in error:", authError);
@@ -119,14 +197,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!auth) return;
 
     try {
-      // Optionally remove cached Chrome auth token if running in extension
+      setLoading(true);
+
+      // Invalidate the token in Chrome's identity cache before signing out of Firebase
       if (typeof chrome !== "undefined" && chrome.identity && chrome.identity.getAuthToken) {
-        chrome.identity.getAuthToken({ interactive: false }, (token) => {
-          if (!chrome.runtime?.lastError && token) {
-            chrome.identity.removeCachedAuthToken({ token }, () => {
-              // Cache cleared
-            });
-          }
+        await new Promise<void>((resolve) => {
+          chrome.identity.getAuthToken({ interactive: false }, (token) => {
+            if (!chrome.runtime?.lastError && token) {
+              chrome.identity.removeCachedAuthToken({ token }, () => {
+                resolve();
+              });
+            } else {
+              resolve();
+            }
+          });
         });
       }
 
@@ -135,6 +219,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (err: unknown) {
       const authError = err as { message?: string };
       setError(authError.message || "Failed to sign out.");
+    } finally {
+      setLoading(false);
     }
   };
 
