@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "AppliedYet",
+  "version": "1.0.0",
+  "description": "Help job seekers remember whether they have already applied to a job.",
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "AppliedYet"
+  },
+  "permissions": [
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.linkedin.com/jobs/*",
+    "https://*.linkedin.com/jobs/view/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.linkedin.com/jobs/*",
+        "https://*.linkedin.com/jobs/view/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

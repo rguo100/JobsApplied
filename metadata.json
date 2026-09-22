@@ -1,0 +1,6 @@
+{
+  "name": "AppliedYet - Job Application Tracker",
+  "description": "Chrome Extension MVP helping job seekers track whether they have already applied to a job on LinkedIn.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
