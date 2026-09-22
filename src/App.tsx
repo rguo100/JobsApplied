@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Job, ExtensionMessage } from "./types/job";
 import { JobCard } from "./components/JobCard";
-import { BookmarkCheck, RefreshCw, Layers, CheckCircle } from "lucide-react";
-import { extractLinkedInJob } from "./content/linkedinJobExtractor";
+import { BookmarkCheck, RefreshCw, Layers } from "lucide-react";
 
 // Sample mock data for interactive web preview / testing
 const SAMPLE_MOCK_JOBS: Job[] = [
@@ -37,61 +36,77 @@ export default function App() {
   const [loading, setLoading] = useState<boolean>(true);
   const [isLinkedInPage, setIsLinkedInPage] = useState<boolean>(false);
   const [isExtensionEnv, setIsExtensionEnv] = useState<boolean>(false);
-  const [activeTabUrl, setActiveTabUrl] = useState<string>("");
 
   // Function to fetch active job from active tab
   const fetchActiveTabJob = useCallback(() => {
     setLoading(true);
 
-    // Detect if running inside Chrome Extension environment
-    if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.query) {
-      setIsExtensionEnv(true);
+    try {
+      // Detect if running inside Chrome Extension environment with active tab access
+      if (typeof chrome !== "undefined" && chrome?.tabs?.query) {
+        setIsExtensionEnv(true);
 
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const activeTab = tabs[0];
-        if (!activeTab || !activeTab.id || !activeTab.url) {
-          setLoading(false);
-          setIsLinkedInPage(false);
-          setJob(null);
-          return;
-        }
-
-        setActiveTabUrl(activeTab.url);
-        const onLinkedIn = activeTab.url.includes("linkedin.com/jobs");
-        setIsLinkedInPage(onLinkedIn);
-
-        if (!onLinkedIn) {
-          setLoading(false);
-          setJob(null);
-          return;
-        }
-
-        // Request job from the content script
-        chrome.tabs.sendMessage(
-          activeTab.id,
-          { type: "GET_CURRENT_JOB" } as ExtensionMessage,
-          (response) => {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (chrome.runtime?.lastError || !tabs || tabs.length === 0) {
             setLoading(false);
-            if (chrome.runtime.lastError) {
-              // If content script not yet injected or loaded
-              setJob(null);
-              return;
-            }
-            if (response && response.type === "CURRENT_JOB_RESPONSE") {
-              setJob(response.job);
-            }
+            setIsLinkedInPage(false);
+            setJob(null);
+            return;
           }
-        );
-      });
-    } else {
-      // Running in web dev preview mode
-      setIsExtensionEnv(false);
-      setIsLinkedInPage(true);
-      // Default to first sample job in preview mode
-      setTimeout(() => {
-        setJob((prev) => prev || SAMPLE_MOCK_JOBS[0]);
-        setLoading(false);
-      }, 400);
+
+          const activeTab = tabs[0];
+          if (!activeTab || !activeTab.id || !activeTab.url) {
+            setLoading(false);
+            setIsLinkedInPage(false);
+            setJob(null);
+            return;
+          }
+
+          const onLinkedIn = activeTab.url.includes("linkedin.com/jobs");
+          setIsLinkedInPage(onLinkedIn);
+
+          if (!onLinkedIn) {
+            setLoading(false);
+            setJob(null);
+            return;
+          }
+
+          // Request job from the content script safely
+          try {
+            chrome.tabs.sendMessage(
+              activeTab.id,
+              { type: "GET_CURRENT_JOB" } as ExtensionMessage,
+              (response) => {
+                setLoading(false);
+                // Check if lastError exists (e.g. content script not ready or page refreshed)
+                if (chrome.runtime?.lastError) {
+                  setJob(null);
+                  return;
+                }
+                if (response && response.type === "CURRENT_JOB_RESPONSE") {
+                  setJob(response.job || null);
+                } else {
+                  setJob(null);
+                }
+              }
+            );
+          } catch {
+            setLoading(false);
+            setJob(null);
+          }
+        });
+      } else {
+        // Running in web dev preview mode
+        setIsExtensionEnv(false);
+        setIsLinkedInPage(true);
+        setTimeout(() => {
+          setJob((prev) => prev || SAMPLE_MOCK_JOBS[0]);
+          setLoading(false);
+        }, 300);
+      }
+    } catch {
+      setLoading(false);
+      setJob(null);
     }
   }, []);
 
@@ -99,17 +114,25 @@ export default function App() {
     fetchActiveTabJob();
 
     // Listen for real-time SPA job updates from content script
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
-      const listener = (message: ExtensionMessage) => {
-        if (message.type === "JOB_UPDATED") {
-          setJob(message.job);
-          setLoading(false);
-        }
-      };
-      chrome.runtime.onMessage.addListener(listener);
-      return () => {
-        chrome.runtime.onMessage.removeListener(listener);
-      };
+    try {
+      if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage) {
+        const listener = (message: ExtensionMessage) => {
+          if (message && message.type === "JOB_UPDATED") {
+            setJob(message.job);
+            setLoading(false);
+          }
+        };
+        chrome.runtime.onMessage.addListener(listener);
+        return () => {
+          try {
+            chrome.runtime.onMessage.removeListener(listener);
+          } catch {
+            // Safe cleanup
+          }
+        };
+      }
+    } catch {
+      // Ignore if outside extension runtime
     }
   }, [fetchActiveTabJob]);
 
@@ -134,7 +157,7 @@ export default function App() {
           <button
             onClick={fetchActiveTabJob}
             title="Refresh job details"
-            className="p-1.5 rounded-lg hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition"
+            className="p-1.5 rounded-lg hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition cursor-pointer"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
           </button>
@@ -169,7 +192,7 @@ export default function App() {
                     setLoading(false);
                   }, 150);
                 }}
-                className={`text-[10px] truncate p-1.5 rounded-md border font-medium transition text-left ${
+                className={`text-[10px] truncate p-1.5 rounded-md border font-medium transition text-left cursor-pointer ${
                   job?.externalJobId === mockJob.externalJobId
                     ? "bg-indigo-50 border-indigo-300 text-indigo-700 font-semibold"
                     : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"

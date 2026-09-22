@@ -34,12 +34,12 @@ export const JobCard: React.FC<JobCardProps> = ({ job, loading, isLinkedInPage, 
       <div className="p-4 text-center bg-slate-50 border border-slate-200 rounded-xl my-2">
         <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
         <h3 className="text-sm font-semibold text-slate-800 mb-1">
-          {isLinkedInPage ? "No Active Job Detected" : "Not on a LinkedIn Job Page"}
+          Open a LinkedIn job to get started
         </h3>
         <p className="text-xs text-slate-500 mb-3">
           {isLinkedInPage
-            ? "Navigate to or select a specific job posting on LinkedIn."
-            : "Please navigate to linkedin.com/jobs to view and track applications."}
+            ? "Select or navigate to a specific job posting on LinkedIn to inspect."
+            : "Navigate to linkedin.com/jobs to view and track your applications."}
         </p>
         <button
           onClick={onRefresh}
