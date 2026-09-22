@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import {
   User,
+  GoogleAuthProvider,
+  signInWithCredential,
   signInWithPopup,
   signOut,
   onAuthStateChanged,
@@ -50,24 +52,61 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const signInWithGoogle = async () => {
     setError(null);
-    if (!isConfigured || !auth || !googleProvider) {
+    if (!isConfigured || !auth) {
       setError("Firebase credentials not configured. Please supply your Firebase Web configuration.");
       return;
     }
 
+    const authInstance = auth;
     setLoading(true);
+
     try {
-      await signInWithPopup(auth, googleProvider);
+      // Check if running inside Chrome Extension environment with Chrome Identity API
+      const hasChromeIdentity =
+        typeof chrome !== "undefined" &&
+        chrome.identity &&
+        typeof chrome.identity.getAuthToken === "function";
+
+      if (hasChromeIdentity) {
+        // --- Native Chrome Extension Google OAuth using chrome.identity.getAuthToken ---
+        const accessToken = await new Promise<string>((resolve, reject) => {
+          chrome.identity.getAuthToken({ interactive: true }, (token) => {
+            if (chrome.runtime?.lastError) {
+              const lastMsg = chrome.runtime.lastError.message || "OAuth error";
+              if (
+                lastMsg.toLowerCase().includes("canceled") ||
+                lastMsg.toLowerCase().includes("cancelled") ||
+                lastMsg.toLowerCase().includes("did not approve")
+              ) {
+                return reject(new Error("Sign-in was cancelled by user."));
+              }
+              return reject(new Error(lastMsg));
+            }
+
+            if (!token) {
+              return reject(new Error("No access token returned from Chrome Identity."));
+            }
+
+            resolve(token);
+          });
+        });
+
+        // Convert the returned Google OAuth2 access token to a Firebase Auth Credential
+        const credential = GoogleAuthProvider.credential(null, accessToken);
+        await signInWithCredential(authInstance, credential);
+      } else {
+        // --- Web Preview Fallback (only used when developing outside Chrome Extension) ---
+        if (!googleProvider) {
+          throw new Error("Google Auth Provider unavailable.");
+        }
+        await signInWithPopup(authInstance, googleProvider);
+      }
     } catch (err: unknown) {
       const authError = err as { code?: string; message?: string };
-      console.warn("AppliedYet: Google sign-in failed:", authError);
+      console.warn("AppliedYet: Google sign-in error:", authError);
 
-      if (authError.code === "auth/popup-closed-by-user") {
-        setError("Sign-in popup was closed before completing.");
-      } else if (authError.code === "auth/unauthorized-domain") {
-        setError(
-          "This extension domain is not authorized in Firebase Console. Add your extension ID to Authorized Domains."
-        );
+      if (authError.message?.includes("cancelled") || authError.message?.includes("closed")) {
+        setError("Sign-in was cancelled.");
       } else {
         setError(authError.message || "Failed to sign in with Google.");
       }
@@ -81,6 +120,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!auth) return;
 
     try {
+      // Optionally remove cached Chrome auth token if running in extension
+      if (typeof chrome !== "undefined" && chrome.identity && chrome.identity.getAuthToken) {
+        chrome.identity.getAuthToken({ interactive: false }, (token) => {
+          if (!chrome.runtime?.lastError && token) {
+            chrome.identity.removeCachedAuthToken({ token }, () => {
+              // Cache cleared
+            });
+          }
+        });
+      }
+
       await signOut(auth);
       setUser(null);
     } catch (err: unknown) {

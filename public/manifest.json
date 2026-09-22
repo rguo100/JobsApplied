@@ -8,8 +8,17 @@
     "default_title": "AppliedYet"
   },
   "permissions": [
-    "activeTab"
+    "activeTab",
+    "identity"
   ],
+  "oauth2": {
+    "client_id": "PASTE_YOUR_GOOGLE_OAUTH_CLIENT_ID_HERE.apps.googleusercontent.com",
+    "scopes": [
+      "openid",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ]
+  },
   "host_permissions": [
     "https://*.linkedin.com/jobs/*",
     "https://*.linkedin.com/jobs/view/*"
