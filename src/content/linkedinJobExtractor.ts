@@ -3,12 +3,12 @@ import { Job } from "../types/job";
 /**
  * Normalizes text by removing redundant whitespace and trimming.
  */
-function normalizeText(text: string | null | undefined): string {
+export function normalizeText(text: string | null | undefined): string {
   if (!text) return "";
   return text
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/^[·•\-\s]+|[·•\-\s]+$/g, "")
+    .replace(/^[·•\-\s|]+|[·•\-\s|]+$/g, "")
     .trim();
 }
 
@@ -16,7 +16,7 @@ function normalizeText(text: string | null | undefined): string {
  * Finds the active job detail pane on LinkedIn SPA to scope selectors
  * and prevent picking elements from other job cards in the search-results list.
  */
-function getActiveDetailPane(doc: Document = document): Element | null {
+export function getActiveDetailPane(doc: Document = document): Element | null {
   const containerSelectors = [
     ".jobs-details__main-content",
     ".job-view-layout",
@@ -26,6 +26,8 @@ function getActiveDetailPane(doc: Document = document): Element | null {
     ".job-details-jobs-unified-top-card",
     "[data-view-name='job-details']",
     "#job-details",
+    ".jobs-search-results-list__detail-pane",
+    ".jobs-search-two-pane__detail",
     "main",
   ];
 
@@ -78,7 +80,7 @@ export function extractLinkedInJobId(currentUrl: string, doc: Document = documen
 /**
  * Extracts Job Title from standard LinkedIn layouts.
  */
-function extractTitle(doc: Document = document, detailPane: Element | null = null): string {
+export function extractTitle(doc: Document = document, detailPane: Element | null = null): string {
   const scope = detailPane || doc;
 
   const selectors = [
@@ -119,7 +121,7 @@ function extractTitle(doc: Document = document, detailPane: Element | null = nul
 /**
  * Extracts Company Name scoped to the active job detail pane.
  */
-function extractCompany(doc: Document = document, detailPane: Element | null = null): string {
+export function extractCompany(doc: Document = document, detailPane: Element | null = null): string {
   const scope = detailPane || doc;
 
   const selectors = [
@@ -172,7 +174,7 @@ function extractCompany(doc: Document = document, detailPane: Element | null = n
   );
   if (primaryDesc) {
     const rawText = primaryDesc.textContent || "";
-    const parts = rawText.split(/[·•]/).map(normalizeText).filter(Boolean);
+    const parts = rawText.split(/[·•|]/).map(normalizeText).filter(Boolean);
     if (parts.length > 0 && parts[0].length > 0) {
       return parts[0];
     }
@@ -182,112 +184,193 @@ function extractCompany(doc: Document = document, detailPane: Element | null = n
 }
 
 /**
- * Filter to verify if a text fragment represents location rather than metadata.
+ * Filter to verify if a text fragment represents non-location metadata.
  */
-function isValidLocationText(text: string): boolean {
-  if (!text || text.length < 2) return false;
-  const lower = text.toLowerCase();
+function isMetadataNoise(text: string): boolean {
+  if (!text || text.length < 2) return true;
+  const lower = text.toLowerCase().trim();
 
-  // Exclude common LinkedIn metadata tokens
-  const forbidden = [
-    "applicant",
+  // Exact matches for noise words
+  const exactNoise = [
     "reposted",
-    "ago",
-    "viewed",
+    "posted",
     "promoted",
+    "viewed",
     "actively recruiting",
     "easy apply",
-    "connections work here",
-    "alumni",
-    "school",
-    "matches your preferences",
-    "skills",
     "full-time",
     "part-time",
     "contract",
+    "temporary",
+    "internship",
+    "other",
+    "see all",
+    "see recent activity",
+  ];
+  if (exactNoise.includes(lower)) return true;
+
+  // Pattern matches for LinkedIn metadata tokens
+  const noisePatterns = [
+    /\b\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago\b/i,
+    /\b(?:reposted|posted)\s+\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago\b/i,
+    /\b\d+\s+applicants?\b/i,
+    /\bover\s+\d+\s+applicants?\b/i,
+    /\bbe\s+among\s+the\s+first\b/i,
+    /\bactively\s+recruiting\b/i,
+    /\beasy\s+apply\b/i,
+    /\bconnections?\s+work\s+here\b/i,
+    /\balumni\s+work\s+here\b/i,
+    /\bschool\s+alumni\b/i,
+    /\bmatches\s+your\s+preferences\b/i,
   ];
 
-  for (const bad of forbidden) {
-    if (lower.includes(bad)) return false;
+  return noisePatterns.some((pattern) => pattern.test(lower));
+}
+
+/**
+ * Validates whether a given cleaned string looks like a legitimate location.
+ */
+function isValidLocationToken(text: string, companyName: string = ""): boolean {
+  if (!text || text.length < 2) return false;
+  const lower = text.toLowerCase().trim();
+
+  // Cannot match company name
+  if (companyName && lower === companyName.toLowerCase().trim()) {
+    return false;
+  }
+
+  // Cannot be pure metadata noise
+  if (isMetadataNoise(lower)) {
+    return false;
+  }
+
+  // Reject generic action labels
+  if (["see all", "apply", "save", "share", "follow", "viewed"].includes(lower)) {
+    return false;
   }
 
   return true;
 }
 
 /**
+ * Parses and extracts pure location from a metadata line or combined container string.
+ * e.g.:
+ * "Montreal, QC · 1 week ago · 23 applicants" -> "Montreal, QC"
+ * "Cisco · Montreal, QC · 1 week ago · 23 applicants" -> "Montreal, QC"
+ * "Victoria, BC (Remote)" -> "Victoria, BC (Remote)"
+ * "Toronto, ON · Remote" -> "Toronto, ON (Remote)"
+ */
+export function extractLocationFromMetadataLine(rawText: string, companyName: string = ""): string | null {
+  if (!rawText) return null;
+
+  // Split on common LinkedIn delimiters: middot, bullet, pipe, newline
+  const parts = rawText
+    .split(/[·•|\n\r\t]/)
+    .map(normalizeText)
+    .filter((p) => p.length > 0);
+
+  const candidateTokens: string[] = [];
+
+  for (const part of parts) {
+    // If part contains mixed metadata like "Montreal, QC 1 week ago", strip trailing age/applicants
+    let cleaned = part
+      .replace(/(?:reposted\s+)?\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago.*$/i, "")
+      .replace(/(?:over\s+)?\d+\s+applicants?.*$/i, "")
+      .replace(/actively recruiting.*$/i, "")
+      .trim();
+
+    cleaned = normalizeText(cleaned);
+
+    if (isValidLocationToken(cleaned, companyName)) {
+      candidateTokens.push(cleaned);
+    }
+  }
+
+  if (candidateTokens.length === 0) {
+    return null;
+  }
+
+  // Check if we have both a geographic location and a workplace type (e.g. "Toronto, ON" and "Remote")
+  if (candidateTokens.length >= 2) {
+    const primary = candidateTokens[0];
+    const secondary = candidateTokens[1];
+    const isWorkplaceType = /^(?:remote|hybrid|on-site)$/i.test(secondary);
+
+    if (isWorkplaceType) {
+      // Format as "City, Province (Remote)"
+      return `${primary} (${secondary.charAt(0).toUpperCase() + secondary.slice(1).toLowerCase()})`;
+    }
+    return primary;
+  }
+
+  return candidateTokens[0];
+}
+
+/**
  * Extracts Job Location scoped to the active job detail pane.
  */
-function extractLocation(
+export function extractLocation(
   doc: Document = document,
   detailPane: Element | null = null,
   companyName: string = ""
 ): string {
   const scope = detailPane || doc;
 
-  const selectors = [
-    // 1. Specific LinkedIn location data containers & tvm text
+  // 1. Direct and specific location selectors
+  const directSelectors = [
     "[data-anonymize='job-location']",
     ".job-details-jobs-unified-top-card__primary-description-container .tvm__text",
     ".job-details-jobs-unified-top-card__primary-description span.tvm__text",
-    ".job-details-jobs-unified-top-card__primary-description-container span",
-    
-    // 2. Bullets and secondary groupings
-    ".jobs-unified-top-card__bullet",
-    ".jobs-unified-top-card__bullet + span",
     ".jobs-unified-top-card__subtitle-secondary-grouping span",
-    ".jobs-unified-top-card__workplace-type",
-
-    // 3. Classic top-card selectors
+    ".jobs-unified-top-card__subtitle-secondary-grouping",
+    ".jobs-unified-top-card__bullet + span",
     ".topcard__flavor--bullet",
     ".top-card-layout__first-subline .topcard__flavor:not(a)",
     ".job-details-jobs-unified-top-card__tertiary-description",
+    "[class*='job-details'] [class*='location']",
+    "[class*='top-card'] [class*='location']",
   ];
 
-  for (const selector of selectors) {
+  for (const selector of directSelectors) {
     const elements = scope.querySelectorAll(selector);
     for (const el of elements) {
-      const text = normalizeText(el.textContent);
-      if (text && isValidLocationText(text)) {
-        // Ensure it is not identical to the company name
-        if (!companyName || text.toLowerCase() !== companyName.toLowerCase()) {
-          return text;
-        }
+      const rawText = el.textContent || "";
+      const parsed = extractLocationFromMetadataLine(rawText, companyName);
+      if (parsed) {
+        return parsed;
       }
     }
   }
 
-  // Fallback: Parse location from primary description container tokens
-  // LinkedIn often structures: Company · Location (Workplace Type) · Time Ago · Applicants
-  const primaryDesc = scope.querySelector(
-    ".job-details-jobs-unified-top-card__primary-description, .jobs-unified-top-card__primary-description, .job-details-jobs-unified-top-card__primary-description-container"
-  );
-  if (primaryDesc) {
-    // Check individual span children first
-    const spans = primaryDesc.querySelectorAll("span");
-    for (const span of spans) {
-      const spanText = normalizeText(span.textContent);
-      if (
-        spanText &&
-        isValidLocationText(spanText) &&
-        (!companyName || spanText.toLowerCase() !== companyName.toLowerCase())
-      ) {
-        return spanText;
+  // 2. Primary description containers (often contain company, location, date, applicants)
+  const containerSelectors = [
+    ".job-details-jobs-unified-top-card__primary-description-container",
+    ".job-details-jobs-unified-top-card__primary-description",
+    ".jobs-unified-top-card__primary-description-container",
+    ".jobs-unified-top-card__primary-description",
+    ".jobs-details__main-content .job-details-jobs-unified-top-card__primary-description",
+    ".job-details-jobs-unified-top-card",
+    ".top-card-layout__first-subline",
+  ];
+
+  for (const selector of containerSelectors) {
+    const container = scope.querySelector(selector);
+    if (container) {
+      // First try any child spans
+      const spans = container.querySelectorAll("span");
+      for (const span of spans) {
+        const spanText = span.textContent || "";
+        const parsed = extractLocationFromMetadataLine(spanText, companyName);
+        if (parsed) {
+          return parsed;
+        }
       }
-    }
 
-    // Split raw text by bullet / dot separators
-    const rawText = primaryDesc.textContent || "";
-    const parts = rawText
-      .split(/[·•]/)
-      .map(normalizeText)
-      .filter((p) => p.length > 0);
-
-    for (const part of parts) {
-      if (
-        isValidLocationText(part) &&
-        (!companyName || part.toLowerCase() !== companyName.toLowerCase())
-      ) {
-        return part;
+      // Then try full container text
+      const containerText = container.textContent || "";
+      const parsed = extractLocationFromMetadataLine(containerText, companyName);
+      if (parsed) {
+        return parsed;
       }
     }
   }
@@ -298,7 +381,7 @@ function extractLocation(
 /**
  * Calculates Canonical or clean URL for the LinkedIn job.
  */
-function buildCanonicalUrl(jobId: string | null, currentUrl: string): string {
+export function buildCanonicalUrl(jobId: string | null, currentUrl: string): string {
   if (jobId) {
     return `https://www.linkedin.com/jobs/view/${jobId}/`;
   }

@@ -1,7 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { Job, ExtensionMessage } from "./types/job";
 import { JobCard } from "./components/JobCard";
-import { BookmarkCheck, RefreshCw, Layers } from "lucide-react";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import {
+  BookmarkCheck,
+  RefreshCw,
+  Layers,
+  LogOut,
+  AlertCircle,
+  X,
+  User as UserIcon,
+} from "lucide-react";
 
 // Sample mock data for interactive web preview / testing
 const SAMPLE_MOCK_JOBS: Job[] = [
@@ -31,24 +40,24 @@ const SAMPLE_MOCK_JOBS: Job[] = [
   },
 ];
 
-export default function App() {
+function PopupContent() {
+  const { user, loading: authLoading, error: authError, isConfigured, signInWithGoogle, signOutUser, clearError } = useAuth();
   const [job, setJob] = useState<Job | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [jobLoading, setJobLoading] = useState<boolean>(true);
   const [isLinkedInPage, setIsLinkedInPage] = useState<boolean>(false);
   const [isExtensionEnv, setIsExtensionEnv] = useState<boolean>(false);
 
   // Function to fetch active job from active tab
   const fetchActiveTabJob = useCallback(() => {
-    setLoading(true);
+    setJobLoading(true);
 
     try {
-      // Detect if running inside Chrome Extension environment with active tab access
       if (typeof chrome !== "undefined" && chrome?.tabs?.query) {
         setIsExtensionEnv(true);
 
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
           if (chrome.runtime?.lastError || !tabs || tabs.length === 0) {
-            setLoading(false);
+            setJobLoading(false);
             setIsLinkedInPage(false);
             setJob(null);
             return;
@@ -56,7 +65,7 @@ export default function App() {
 
           const activeTab = tabs[0];
           if (!activeTab || !activeTab.id || !activeTab.url) {
-            setLoading(false);
+            setJobLoading(false);
             setIsLinkedInPage(false);
             setJob(null);
             return;
@@ -66,19 +75,17 @@ export default function App() {
           setIsLinkedInPage(onLinkedIn);
 
           if (!onLinkedIn) {
-            setLoading(false);
+            setJobLoading(false);
             setJob(null);
             return;
           }
 
-          // Request job from the content script safely
           try {
             chrome.tabs.sendMessage(
               activeTab.id,
               { type: "GET_CURRENT_JOB" } as ExtensionMessage,
               (response) => {
-                setLoading(false);
-                // Check if lastError exists (e.g. content script not ready or page refreshed)
+                setJobLoading(false);
                 if (chrome.runtime?.lastError) {
                   setJob(null);
                   return;
@@ -91,7 +98,7 @@ export default function App() {
               }
             );
           } catch {
-            setLoading(false);
+            setJobLoading(false);
             setJob(null);
           }
         });
@@ -101,11 +108,11 @@ export default function App() {
         setIsLinkedInPage(true);
         setTimeout(() => {
           setJob((prev) => prev || SAMPLE_MOCK_JOBS[0]);
-          setLoading(false);
+          setJobLoading(false);
         }, 300);
       }
     } catch {
-      setLoading(false);
+      setJobLoading(false);
       setJob(null);
     }
   }, []);
@@ -113,13 +120,12 @@ export default function App() {
   useEffect(() => {
     fetchActiveTabJob();
 
-    // Listen for real-time SPA job updates from content script
     try {
       if (typeof chrome !== "undefined" && chrome?.runtime?.onMessage) {
         const listener = (message: ExtensionMessage) => {
           if (message && message.type === "JOB_UPDATED") {
             setJob(message.job);
-            setLoading(false);
+            setJobLoading(false);
           }
         };
         chrome.runtime.onMessage.addListener(listener);
@@ -136,9 +142,19 @@ export default function App() {
     }
   }, [fetchActiveTabJob]);
 
+  // If authentication state is checking
+  if (authLoading) {
+    return (
+      <div className="w-[360px] min-h-[420px] bg-slate-100/80 text-slate-900 font-sans p-6 flex flex-col items-center justify-center text-center">
+        <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mb-3"></div>
+        <p className="text-xs font-medium text-slate-600">Loading AppliedYet...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="w-[360px] min-h-[420px] bg-slate-100/70 text-slate-900 font-sans p-4 flex flex-col justify-between select-none">
-      {/* Header */}
+    <div className="w-[360px] min-h-[440px] bg-slate-100/70 text-slate-900 font-sans p-4 flex flex-col justify-between select-none">
+      {/* Top Header */}
       <div>
         <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-200">
           <div className="flex items-center gap-2">
@@ -154,22 +170,130 @@ export default function App() {
               </span>
             </div>
           </div>
-          <button
-            onClick={fetchActiveTabJob}
-            title="Refresh job details"
-            className="p-1.5 rounded-lg hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition cursor-pointer"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-          </button>
+
+          <div className="flex items-center gap-1">
+            {user && (
+              <button
+                onClick={fetchActiveTabJob}
+                title="Refresh job details"
+                className="p-1.5 rounded-lg hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition cursor-pointer"
+              >
+                <RefreshCw className={`w-4 h-4 ${jobLoading ? "animate-spin" : ""}`} />
+              </button>
+            )}
+
+            {user && (
+              <button
+                onClick={signOutUser}
+                title="Sign out"
+                className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Main Job Card */}
-        <JobCard
-          job={job}
-          loading={loading}
-          isLinkedInPage={isLinkedInPage}
-          onRefresh={fetchActiveTabJob}
-        />
+        {/* Global Error Banner */}
+        {authError && (
+          <div className="mb-3 p-2.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs flex items-start justify-between gap-2">
+            <div className="flex items-start gap-1.5">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span className="leading-tight">{authError}</span>
+            </div>
+            <button
+              onClick={clearError}
+              className="text-rose-400 hover:text-rose-700 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Unauthenticated View */}
+        {!user ? (
+          <div className="py-8 px-4 flex flex-col items-center text-center space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shadow-2xs">
+              <UserIcon className="w-6 h-6" />
+            </div>
+
+            <div>
+              <h2 className="text-sm font-semibold text-slate-800">
+                Sign in to track applications
+              </h2>
+              <p className="text-xs text-slate-500 mt-1 max-w-[260px]">
+                Sign in with your Google account to sync and remember your applied jobs.
+              </p>
+            </div>
+
+            {!isConfigured && (
+              <div className="w-full text-left p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800">
+                <span className="font-semibold block mb-0.5">Firebase Configuration:</span>
+                Supply your Firebase Web credentials in environment variables to enable live Google auth.
+              </div>
+            )}
+
+            <button
+              onClick={signInWithGoogle}
+              className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 font-semibold rounded-xl text-xs flex items-center justify-center gap-2.5 shadow-2xs transition active:scale-[0.99] cursor-pointer"
+            >
+              {/* Google SVG Icon */}
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24Z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 10.03 0 12s.45 3.82 1.25 5.42l4.03-3.15Z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98Z"
+                />
+              </svg>
+              <span>Continue with Google</span>
+            </button>
+          </div>
+        ) : (
+          /* Authenticated View */
+          <div>
+            {/* User Identity pill */}
+            <div className="flex items-center justify-between bg-white border border-slate-200/80 rounded-lg px-3 py-1.5 mb-3">
+              <div className="flex items-center gap-2 min-w-0">
+                {user.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt={user.displayName || "User"}
+                    className="w-5 h-5 rounded-full object-cover shrink-0"
+                  />
+                ) : (
+                  <div className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold shrink-0">
+                    {(user.displayName || user.email || "U")[0].toUpperCase()}
+                  </div>
+                )}
+                <span className="text-xs font-medium text-slate-700 truncate">
+                  {user.displayName || user.email}
+                </span>
+              </div>
+              <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-medium">
+                Signed in
+              </span>
+            </div>
+
+            {/* Job Details Card */}
+            <JobCard
+              job={job}
+              loading={jobLoading}
+              isLinkedInPage={isLinkedInPage}
+              onRefresh={fetchActiveTabJob}
+            />
+          </div>
+        )}
       </div>
 
       {/* Dev preview simulator switch (only shown when not in extension runtime) */}
@@ -186,10 +310,10 @@ export default function App() {
               <button
                 key={mockJob.externalJobId}
                 onClick={() => {
-                  setLoading(true);
+                  setJobLoading(true);
                   setTimeout(() => {
                     setJob(mockJob);
-                    setLoading(false);
+                    setJobLoading(false);
                   }, 150);
                 }}
                 className={`text-[10px] truncate p-1.5 rounded-md border font-medium transition text-left cursor-pointer ${
@@ -212,5 +336,13 @@ export default function App() {
         </p>
       </footer>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <PopupContent />
+    </AuthProvider>
   );
 }

@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // User root document and subcollections (applications, etc.)
+    match /users/{userId} {
+      // User may only read and write their own user profile document
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // Applications subcollection: users/{userId}/applications/{applicationId}
+      match /applications/{applicationId} {
+        // Users can ONLY read, create, update, or delete their own job applications
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // Explicitly deny access to all other paths
+    match /{document=**} {
+      allow read, write: false;
+    }
+  }
+}
