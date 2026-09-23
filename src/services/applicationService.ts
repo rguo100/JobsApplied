@@ -12,12 +12,25 @@ import {
 } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "../firebase/config";
 import { Application, ApplicationStatus, getApplicationDocId } from "../types/application";
-import {
-  Job,
-  isFallbackCompany,
-  isFallbackLocation,
-  isFallbackTitle,
-} from "../types/job";
+import type { Job } from "../types/job";
+
+function isFallbackCompany(company?: string | null): boolean {
+  if (!company) return true;
+  const trimmed = company.trim();
+  return trimmed.length === 0 || trimmed.toLowerCase() === "unknown company";
+}
+
+function isFallbackLocation(location?: string | null): boolean {
+  if (!location) return true;
+  const trimmed = location.trim();
+  return trimmed.length === 0 || trimmed.toLowerCase() === "location not specified" || trimmed.toLowerCase() === "unknown location";
+}
+
+function isFallbackTitle(title?: string | null): boolean {
+  if (!title) return true;
+  const trimmed = title.trim();
+  return trimmed.length === 0 || trimmed.toLowerCase() === "unknown title" || trimmed.toLowerCase() === "job title";
+}
 
 /**
  * Returns a document reference for an application under users/{uid}/applications/{applicationId}

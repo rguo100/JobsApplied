@@ -3,9 +3,11 @@ import {
   ExtensionMessage,
   MutationIdentity,
   matchesMutationIdentity,
+} from "../../types/job";
+import {
   hasBetterJobMetadata,
   mergeJobMetadata,
-} from "../../types/job";
+} from "./jobMetadata";
 import { Application } from "../../types/application";
 import { LinkedInWidget } from "./LinkedInWidget";
 import {
@@ -349,6 +351,9 @@ export class WidgetManager {
       if (this.isAuthenticated) {
         this.subscribeToCurrentJob();
       }
+
+      // 5. Schedule mount verification in case DOM anchor is still rendering
+      this.scheduleMountCheck();
     } else {
       // Same job detected again (e.g. DOM update or detail pane finished rendering):
       // Refresh active metadata if the new extraction has non-fallback values
@@ -356,7 +361,7 @@ export class WidgetManager {
         if (hasBetterJobMetadata(this.currentJob, job)) {
           const merged = mergeJobMetadata(this.currentJob, job);
           console.log(
-            `[AppliedYet] Refreshed metadata for job ${job.externalJobId}: ${merged.company} - ${merged.location}`
+            `[AppliedYet] metadata refresh: ${merged.company} - ${merged.location}`
           );
           this.currentJob = merged;
           // Refresh widget internal job reference without altering subscription or mode
@@ -377,6 +382,7 @@ export class WidgetManager {
   public scheduleMountCheck() {
     if (this.mountCheckScheduled) return;
     this.mountCheckScheduled = true;
+    console.log("[AppliedYet] mount scheduled");
     requestAnimationFrame(() => {
       this.mountCheckScheduled = false;
       if (this.currentJob) {
@@ -583,8 +589,8 @@ export class WidgetManager {
       widgetRoot.style.display = "block";
       widgetRoot.style.width = "100%";
       widgetRoot.style.boxSizing = "border-box";
-      console.log(`[AppliedYet] anchor found: ${anchor.selectorMatched}`);
-      console.log("[AppliedYet] widget root mounted");
+      console.log(`[AppliedYet] mount anchor found: ${anchor.selectorMatched}`);
+      console.log("[AppliedYet] widget mounted");
     } catch (err) {
       console.warn("[AppliedYet] widget error: Failed to mount widget root:", err);
     }

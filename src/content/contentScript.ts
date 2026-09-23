@@ -2,9 +2,11 @@ import { extractLinkedInJob } from "./linkedinJobExtractor";
 import {
   ExtensionMessage,
   Job,
+} from "../types/job";
+import {
   hasBetterJobMetadata,
   mergeJobMetadata,
-} from "../types/job";
+} from "./widget/jobMetadata";
 import { WidgetManager } from "./widget/widgetManager";
 import { createAnimationFrameCoalescer } from "./animationFrameCoalescer";
 
@@ -33,6 +35,7 @@ function notifyJobUpdated(job: Job) {
 const widgetManager = new WidgetManager();
 
 function updateJobExtraction(): Job | null {
+  console.log("[AppliedYet] extraction");
   const job = extractLinkedInJob(document, window.location.href);
 
   // Notify the inline widget manager of current job detection

@@ -5,12 +5,14 @@ import { strict as assert } from "node:assert";
 import {
   Job,
   ExtensionMessage,
+} from "../../../types/job";
+import {
   isFallbackCompany,
   isFallbackLocation,
   isFallbackTitle,
   hasBetterJobMetadata,
   mergeJobMetadata,
-} from "../../../types/job";
+} from "../jobMetadata";
 import { getApplicationDocId } from "../../../types/application";
 
 console.log("Running Metadata Refresh & Data Quality regression tests...");
@@ -235,4 +237,90 @@ const jobB: Job = {
   console.log("✓ PASS: Test 8: Deterministic application identity remains strictly source + externalJobId");
 }
 
-console.log("\nAll 8 Metadata Refresh regression tests PASSED successfully.");
+// Test 9 (Step 4 sequence): T0 early extraction without anchor -> T1 complete extraction with detail DOM
+{
+  let subscriptionCount = 0;
+  let mountAttempts = 0;
+  let mountedCount = 0;
+  let detailDomAvailable = false;
+
+  class MockLifecycleWidgetManager {
+    currentJob: Job | null = null;
+    currentJobId: string | null = null;
+    widgetJob: Job | null = null;
+    isMounted = false;
+
+    onJobDetected(job: Job | null) {
+      if (!job) return;
+      const isNewJob = job.externalJobId !== this.currentJobId;
+
+      if (isNewJob) {
+        this.currentJob = job;
+        this.currentJobId = job.externalJobId;
+        subscriptionCount++;
+        this.widgetJob = job;
+        this.ensureWidgetMounted();
+        this.scheduleMountCheck();
+      } else {
+        if (this.currentJob && hasBetterJobMetadata(this.currentJob, job)) {
+          const merged = mergeJobMetadata(this.currentJob, job);
+          this.currentJob = merged;
+          this.widgetJob = merged;
+        }
+        this.scheduleMountCheck();
+      }
+    }
+
+    scheduleMountCheck() {
+      // Simulate rAF / DOM mutation retry
+      this.ensureWidgetMounted();
+    }
+
+    ensureWidgetMounted() {
+      mountAttempts++;
+      if (!detailDomAvailable) {
+        // Safe anchor not found yet in early DOM
+        return;
+      }
+      if (!this.isMounted) {
+        this.isMounted = true;
+        mountedCount++;
+      }
+    }
+  }
+
+  const manager = new MockLifecycleWidgetManager();
+
+  // T0: Job A extracted early with fallback company and location; no safe mount anchor in DOM
+  detailDomAvailable = false;
+  manager.onJobDetected(partialEarlyJobA);
+
+  assert.equal(subscriptionCount, 1, "T0: Initial subscription created");
+  assert.equal(manager.currentJob?.company, "Unknown Company", "T0: Current company is fallback");
+  assert.equal(manager.isMounted, false, "T0: Widget cannot mount without safe anchor");
+  assert.equal(mountedCount, 0, "T0: Mount count is 0");
+
+  // T1: Same Job A extracted again after detail DOM appears with complete metadata
+  detailDomAvailable = true;
+  manager.onJobDetected(completeJobA);
+
+  assert.equal(subscriptionCount, 1, "T1: Subscription count remains exactly 1 (no duplicate)");
+  assert.equal(manager.currentJob?.company, "Affirm", "T1: Company upgraded to Affirm");
+  assert.equal(manager.currentJob?.location, "Kelowna, BC", "T1: Location upgraded to Kelowna, BC");
+  assert.equal(manager.currentJobId, "3981726450", "T1: Logical job identity unchanged");
+  assert.equal(manager.widgetJob?.company, "Affirm", "T1: Widget state contains Affirm");
+  assert.equal(manager.widgetJob?.location, "Kelowna, BC", "T1: Widget state contains Kelowna, BC");
+  assert.equal(manager.isMounted, true, "T1: Widget is now mounted");
+  assert.equal(mountedCount, 1, "T1: Widget mounted exactly once");
+
+  // T2: Same Job A with unchanged metadata on later DOM mutation
+  const initialAttempts = mountAttempts;
+  manager.onJobDetected(completeJobA);
+
+  assert.equal(subscriptionCount, 1, "T2: Still no duplicate subscription");
+  assert.equal(mountedCount, 1, "T2: Still mounted exactly once (no duplicate roots)");
+  assert.ok(mountAttempts > initialAttempts, "T2: Mount verification still occurred");
+  console.log("✓ PASS: Test 9: T0 early extraction -> T1 complete detail DOM upgrades metadata and mounts widget exactly once");
+}
+
+console.log("\nAll 9 Metadata Refresh regression tests PASSED successfully.");
