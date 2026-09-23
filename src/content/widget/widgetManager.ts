@@ -1,12 +1,35 @@
-import { Job, ExtensionMessage } from "../../types/job";
+import {
+  Job,
+  ExtensionMessage,
+  MutationIdentity,
+  matchesMutationIdentity,
+} from "../../types/job";
 import { Application } from "../../types/application";
 import { LinkedInWidget } from "./LinkedInWidget";
-import { getActiveDetailPane } from "../linkedinJobExtractor";
+import { getActiveDetailPane, isBroadMainDetailPane } from "../linkedinJobExtractor";
 
 interface MountAnchor {
   targetNode: Node;
   insertBefore: Node | null;
   selectorMatched: string;
+}
+
+const RESULT_CARD_SELECTOR = [
+  "li",
+  "[role='listitem']",
+  ".job-card-container",
+  ".jobs-search-results__list-item",
+  ".jobs-search-results-list__list-item",
+].join(",");
+
+const JOB_METADATA_MARKER =
+  /(?:\breposted\b|\b\d+\s+(?:minute|hour|day|week|month|year)s?\s+ago\b|\bapplicants?\b|\bpeople\s+clicked\s+apply\b)/i;
+
+function createMutationRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export class WidgetManager {
@@ -163,11 +186,22 @@ export class WidgetManager {
     }
 
     const activePort = this.port;
+    const identity: MutationIdentity = {
+      requestId: createMutationRequestId(),
+      source: job.source,
+      externalJobId: job.externalJobId,
+    };
 
     return new Promise<void>((resolve, reject) => {
+      let timeoutId: ReturnType<typeof setTimeout>;
       const listener = (msg: ExtensionMessage) => {
-        if (msg && msg.type === "MARK_JOB_APPLIED_RESPONSE") {
+        if (
+          msg &&
+          msg.type === "MARK_JOB_APPLIED_RESPONSE" &&
+          matchesMutationIdentity(msg, identity)
+        ) {
           activePort.onMessage.removeListener(listener);
+          clearTimeout(timeoutId);
           if (msg.success) {
             resolve();
           } else {
@@ -180,10 +214,11 @@ export class WidgetManager {
       activePort.postMessage({
         type: "MARK_JOB_APPLIED",
         job,
+        ...identity,
       } as ExtensionMessage);
 
       // Safety timeout
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         activePort.onMessage.removeListener(listener);
         reject(new Error("Request timed out. Please check your network connection."));
       }, 10000);
@@ -206,11 +241,22 @@ export class WidgetManager {
     }
 
     const activePort = this.port;
+    const identity: MutationIdentity = {
+      requestId: createMutationRequestId(),
+      source: job.source,
+      externalJobId: job.externalJobId,
+    };
 
     return new Promise<void>((resolve, reject) => {
+      let timeoutId: ReturnType<typeof setTimeout>;
       const listener = (msg: ExtensionMessage) => {
-        if (msg && msg.type === "DELETE_APPLICATION_RESPONSE") {
+        if (
+          msg &&
+          msg.type === "DELETE_APPLICATION_RESPONSE" &&
+          matchesMutationIdentity(msg, identity)
+        ) {
           activePort.onMessage.removeListener(listener);
+          clearTimeout(timeoutId);
           if (msg.success) {
             resolve();
           } else {
@@ -222,12 +268,11 @@ export class WidgetManager {
       activePort.onMessage.addListener(listener);
       activePort.postMessage({
         type: "DELETE_APPLICATION",
-        source: job.source,
-        externalJobId: job.externalJobId,
+        ...identity,
       } as ExtensionMessage);
 
       // Safety timeout
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         activePort.onMessage.removeListener(listener);
         reject(new Error("Request timed out. Please check your network connection."));
       }, 10000);
@@ -308,6 +353,7 @@ export class WidgetManager {
     if (!detailPane) {
       return null;
     }
+    const isBroadMain = isBroadMainDetailPane(detailPane);
 
     // Priority 1: Top-card primary description / subtitle groupings inside the active detail pane
     const PRIMARY_DESC_SELECTORS = [
@@ -341,7 +387,7 @@ export class WidgetManager {
       ".jobs-apply-button",
     ];
 
-    for (const selector of ACTIONS_BAR_SELECTORS) {
+    for (const selector of isBroadMain ? [] : ACTIONS_BAR_SELECTORS) {
       const el = detailPane.querySelector(selector);
       if (el && el.parentNode) {
         return {
@@ -354,7 +400,12 @@ export class WidgetManager {
 
     // Priority 3: Active Job link header or title element
     if (jobId) {
-      const activeLink = detailPane.querySelector(`a[href*="/jobs/view/${jobId}/"]`);
+      const matchingLinks = Array.from(
+        detailPane.querySelectorAll(`a[href*="/jobs/view/${jobId}/"]`)
+      );
+      const activeLink = isBroadMain
+        ? matchingLinks.find((link) => this.isVerifiedDetailHeaderLink(link, detailPane))
+        : matchingLinks[0];
       if (activeLink) {
         const headerContainer = activeLink.closest("p, div, header, section") || activeLink;
         if (headerContainer && headerContainer.parentNode && headerContainer.parentNode !== document.body) {
@@ -378,7 +429,7 @@ export class WidgetManager {
       "h1",
     ];
 
-    for (const selector of TITLE_SELECTORS) {
+    for (const selector of isBroadMain ? [] : TITLE_SELECTORS) {
       const el = detailPane.querySelector(selector);
       if (el && el.parentNode && el.parentNode !== document.body) {
         return {
@@ -411,7 +462,7 @@ export class WidgetManager {
     }
 
     // Priority 5: Safe Detail Pane Top Fallback (strictly inside detailPane, NEVER document.body)
-    if (detailPane.firstElementChild) {
+    if (!isBroadMain && detailPane.firstElementChild) {
       return {
         targetNode: detailPane,
         insertBefore: detailPane.firstElementChild,
@@ -419,11 +470,29 @@ export class WidgetManager {
       };
     }
 
+    if (isBroadMain) {
+      return null;
+    }
+
     return {
       targetNode: detailPane,
       insertBefore: null,
       selectorMatched: "detail-pane-append",
     };
+  }
+
+  private isVerifiedDetailHeaderLink(link: Element, broadMain: Element): boolean {
+    if (link.closest(RESULT_CARD_SELECTOR)) return false;
+
+    let candidate: Element | null = link.parentElement;
+    while (candidate && candidate !== broadMain) {
+      const hasMetadataLine = Array.from(candidate.querySelectorAll("p")).some((paragraph) =>
+        JOB_METADATA_MARKER.test(paragraph.textContent || "")
+      );
+      if (hasMetadataLine) return true;
+      candidate = candidate.parentElement;
+    }
+    return false;
   }
 
   /**

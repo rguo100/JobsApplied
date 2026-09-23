@@ -97,6 +97,13 @@ export class LinkedInWidget {
     }
   }
 
+  private isCurrentJob(source: string, externalJobId: string): boolean {
+    return (
+      this.state.job?.source === source &&
+      this.state.job.externalJobId === externalJobId
+    );
+  }
+
   private render() {
     const { mode, job, application, isMutating, errorMessage, confirmingUndo } = this.state;
 
@@ -436,15 +443,21 @@ export class LinkedInWidget {
         e.preventDefault();
         e.stopPropagation();
         if (this.state.isMutating) return;
+        const mutationJob = this.state.job;
+        if (!mutationJob) return;
         this.setState({ isMutating: true, errorMessage: null });
         try {
           await this.callbacks.onMarkApplied();
         } catch (err) {
-          this.setState({
-            errorMessage: err instanceof Error ? err.message : "Failed to mark as applied.",
-          });
+          if (this.isCurrentJob(mutationJob.source, mutationJob.externalJobId)) {
+            this.setState({
+              errorMessage: err instanceof Error ? err.message : "Failed to mark as applied.",
+            });
+          }
         } finally {
-          this.setState({ isMutating: false });
+          if (this.isCurrentJob(mutationJob.source, mutationJob.externalJobId)) {
+            this.setState({ isMutating: false });
+          }
         }
       });
     }
@@ -464,16 +477,24 @@ export class LinkedInWidget {
         e.preventDefault();
         e.stopPropagation();
         if (this.state.isMutating) return;
+        const mutationJob = this.state.job;
+        if (!mutationJob) return;
         this.setState({ isMutating: true, errorMessage: null });
         try {
           await this.callbacks.onUndo();
-          this.setState({ confirmingUndo: false });
+          if (this.isCurrentJob(mutationJob.source, mutationJob.externalJobId)) {
+            this.setState({ confirmingUndo: false });
+          }
         } catch (err) {
-          this.setState({
-            errorMessage: err instanceof Error ? err.message : "Failed to remove application.",
-          });
+          if (this.isCurrentJob(mutationJob.source, mutationJob.externalJobId)) {
+            this.setState({
+              errorMessage: err instanceof Error ? err.message : "Failed to remove application.",
+            });
+          }
         } finally {
-          this.setState({ isMutating: false });
+          if (this.isCurrentJob(mutationJob.source, mutationJob.externalJobId)) {
+            this.setState({ isMutating: false });
+          }
         }
       });
     }

@@ -1,6 +1,7 @@
 import { extractLinkedInJob } from "./linkedinJobExtractor";
 import { ExtensionMessage, Job } from "../types/job";
 import { WidgetManager } from "./widget/widgetManager";
+import { createAnimationFrameCoalescer } from "./animationFrameCoalescer";
 
 console.log("[AppliedYet] content script initialized");
 
@@ -51,9 +52,9 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
 }
 
 // 2. Observe SPA DOM changes (LinkedIn job detail pane dynamic render)
-const observer = new MutationObserver(() => {
-  updateJobExtraction();
-});
+const extractionFrame = createAnimationFrameCoalescer(updateJobExtraction);
+const observer = new MutationObserver(() => extractionFrame.schedule());
+window.addEventListener("pagehide", () => extractionFrame.cancel());
 
 function initObserver() {
   const targetNode = document.body;

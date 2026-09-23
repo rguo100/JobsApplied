@@ -52,10 +52,16 @@ const mockApplicationA: Application = {
 // Polyfill minimal browser DOM globals for Node execution environment
 class MockShadowRoot {
   innerHTML: string = "";
+  listeners = new Map<
+    string,
+    (event: { preventDefault: () => void; stopPropagation: () => void }) => void | Promise<void>
+  >();
   getElementById(id: string): any {
     if (this.innerHTML.includes(`id="${id}"`)) {
       return {
-        addEventListener: () => {},
+        addEventListener: (_type: string, listener: (event: any) => void) => {
+          this.listeners.set(id, listener);
+        },
       };
     }
     return null;
@@ -360,6 +366,43 @@ const tests: TestCase[] = [
       assert.equal(anchor, null);
     },
   },
+  {
+    name: "Scenario 14: A completed mutation cannot clear or error Job B after navigation",
+    run: async () => {
+      let finishMutation!: () => void;
+      const pendingMutation = new Promise<void>((resolve) => {
+        finishMutation = resolve;
+      });
+      const widget = new LinkedInWidget({
+        onMarkApplied: () => pendingMutation,
+        onUndo: async () => {},
+      });
+      widget.setState({ mode: "not_applied", job: mockJobA, isMutating: false });
+
+      const shadow = (widget.getRootElement() as any).shadowRoot as MockShadowRoot;
+      const clickMark = shadow.listeners.get("btn-mark-applied");
+      assert(clickMark);
+      const clickPromise = clickMark({ preventDefault() {}, stopPropagation() {} });
+
+      widget.setState({ mode: "loading", job: mockJobB, isMutating: true });
+      finishMutation();
+      await clickPromise;
+
+      assert(
+        shadow.innerHTML.includes("Checking application status..."),
+        "Job A completion must not replace Job B state"
+      );
+      assert(
+        shadow.innerHTML.includes("class=\"spinner\""),
+        "Job A finally must not clear Job B's active loading state"
+      );
+      assert.equal(
+        (widget as any).state.isMutating,
+        true,
+        "Job A finally must not clear Job B's mutation flag"
+      );
+    },
+  },
 ];
 
 console.log("Running LinkedIn Widget unit tests...");
@@ -368,7 +411,7 @@ let failed = 0;
 
 for (const test of tests) {
   try {
-    test.run();
+    await test.run();
     console.log(`✓ PASS: ${test.name}`);
     passed++;
   } catch (err) {

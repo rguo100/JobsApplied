@@ -7,6 +7,11 @@ import {
 } from "../services/applicationService";
 import { ExtensionMessage, Job } from "../types/job";
 import { Application } from "../types/application";
+import {
+  beginSubscription,
+  invalidateSubscriptions,
+  isCurrentSubscription,
+} from "./subscriptionGeneration";
 
 // Track active content script ports and their subscriptions
 interface PortSubscription {
@@ -15,7 +20,12 @@ interface PortSubscription {
   unsubscribe: () => void;
 }
 
-const activePorts = new Map<chrome.runtime.Port, PortSubscription | null>();
+interface PortState {
+  subscriptionGeneration: number;
+  subscription: PortSubscription | null;
+}
+
+const activePorts = new Map<chrome.runtime.Port, PortState>();
 
 /**
  * Attempts silent token sync using cached Chrome identity credentials
@@ -86,7 +96,10 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onConnect) {
       return;
     }
 
-    activePorts.set(port, null);
+    activePorts.set(port, {
+      subscriptionGeneration: 0,
+      subscription: null,
+    });
 
     // Initial auth check
     const sendAuthStatus = async () => {
@@ -117,17 +130,17 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onConnect) {
 
       if (msg.type === "APPLICATION_SUBSCRIBE") {
         const { source, externalJobId } = msg;
-
-        // Clean up previous subscription for this port
-        const existing = activePorts.get(port);
-        if (existing) {
-          existing.unsubscribe();
-          activePorts.set(port, null);
-        }
+        const initialState = activePorts.get(port);
+        if (!initialState) return;
+        const generation = beginSubscription(initialState);
 
         // Verify auth
         if (!auth?.currentUser) {
           const synced = await attemptSilentSync();
+          const currentState = activePorts.get(port);
+          if (!isCurrentSubscription(currentState, generation)) {
+            return;
+          }
           if (!synced || !auth?.currentUser) {
             try {
               port.postMessage({
@@ -141,12 +154,22 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onConnect) {
           }
         }
 
+        const currentState = activePorts.get(port);
+        if (!currentState || !isCurrentSubscription(currentState, generation)) {
+          return;
+        }
+
+        // Only the latest subscribe request may replace the active listener.
+        currentState.subscription?.unsubscribe();
+        currentState.subscription = null;
+
         const uid = auth.currentUser.uid;
         const unsubscribe = subscribeToApplication(
           uid,
           source,
           externalJobId,
           (application: Application | null) => {
+            if (!isCurrentSubscription(activePorts.get(port), generation)) return;
             try {
               port.postMessage({
                 type: "APPLICATION_DATA",
@@ -159,6 +182,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onConnect) {
             }
           },
           (error: Error) => {
+            if (!isCurrentSubscription(activePorts.get(port), generation)) return;
             try {
               port.postMessage({
                 type: "APPLICATION_ERROR",
@@ -172,30 +196,40 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onConnect) {
           }
         );
 
-        activePorts.set(port, {
+        const stateAfterSetup = activePorts.get(port);
+        if (!stateAfterSetup || !isCurrentSubscription(stateAfterSetup, generation)) {
+          unsubscribe();
+          return;
+        }
+        stateAfterSetup.subscription = {
           source,
           externalJobId,
           unsubscribe,
-        });
+        };
         return;
       }
 
       if (msg.type === "APPLICATION_UNSUBSCRIBE") {
-        const existing = activePorts.get(port);
-        if (existing) {
-          existing.unsubscribe();
-          activePorts.set(port, null);
+        const state = activePorts.get(port);
+        if (state) {
+          invalidateSubscriptions(state);
+          state.subscription?.unsubscribe();
+          state.subscription = null;
         }
         return;
       }
 
       if (msg.type === "MARK_JOB_APPLIED") {
         const job = msg.job as Job;
+        const { requestId, source, externalJobId } = msg;
         if (!auth?.currentUser) {
           const synced = await attemptSilentSync();
           if (!synced || !auth?.currentUser) {
             port.postMessage({
               type: "MARK_JOB_APPLIED_RESPONSE",
+              requestId,
+              source,
+              externalJobId,
               success: false,
               error: "Not authenticated. Please sign in via the AppliedYet extension.",
             } as ExtensionMessage);
@@ -207,11 +241,17 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onConnect) {
           await markJobAsApplied(auth.currentUser.uid, job);
           port.postMessage({
             type: "MARK_JOB_APPLIED_RESPONSE",
+            requestId,
+            source,
+            externalJobId,
             success: true,
           } as ExtensionMessage);
         } catch (err) {
           port.postMessage({
             type: "MARK_JOB_APPLIED_RESPONSE",
+            requestId,
+            source,
+            externalJobId,
             success: false,
             error: err instanceof Error ? err.message : "Failed to mark job as applied.",
           } as ExtensionMessage);
@@ -220,12 +260,15 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onConnect) {
       }
 
       if (msg.type === "DELETE_APPLICATION") {
-        const { source, externalJobId } = msg;
+        const { requestId, source, externalJobId } = msg;
         if (!auth?.currentUser) {
           const synced = await attemptSilentSync();
           if (!synced || !auth?.currentUser) {
             port.postMessage({
               type: "DELETE_APPLICATION_RESPONSE",
+              requestId,
+              source,
+              externalJobId,
               success: false,
               error: "Not authenticated. Please sign in via the AppliedYet extension.",
             } as ExtensionMessage);
@@ -237,11 +280,17 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onConnect) {
           await deleteApplication(auth.currentUser.uid, source, externalJobId);
           port.postMessage({
             type: "DELETE_APPLICATION_RESPONSE",
+            requestId,
+            source,
+            externalJobId,
             success: true,
           } as ExtensionMessage);
         } catch (err) {
           port.postMessage({
             type: "DELETE_APPLICATION_RESPONSE",
+            requestId,
+            source,
+            externalJobId,
             success: false,
             error: err instanceof Error ? err.message : "Failed to remove application.",
           } as ExtensionMessage);
@@ -251,9 +300,11 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onConnect) {
     });
 
     port.onDisconnect.addListener(() => {
-      const existing = activePorts.get(port);
-      if (existing) {
-        existing.unsubscribe();
+      const state = activePorts.get(port);
+      if (state) {
+        invalidateSubscriptions(state);
+        state.subscription?.unsubscribe();
+        state.subscription = null;
       }
       activePorts.delete(port);
     });

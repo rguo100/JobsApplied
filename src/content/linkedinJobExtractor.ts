@@ -75,6 +75,14 @@ export function getActiveDetailPane(doc: Document = document): Element | null {
   return null;
 }
 
+/** True only when getActiveDetailPane had to use its final, page-wide main fallback. */
+export function isBroadMainDetailPane(element: Element): boolean {
+  return (
+    element.tagName.toLowerCase() === "main" &&
+    !DETAIL_PANE_SELECTORS.slice(0, -1).some((selector) => element.matches(selector))
+  );
+}
+
 /**
  * Extracts LinkedIn Job ID from the current URL or DOM context.
  */
