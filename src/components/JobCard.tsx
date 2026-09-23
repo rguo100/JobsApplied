@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Job } from "../types/job";
 import { Application } from "../types/application";
 import {
@@ -60,6 +60,10 @@ export const JobCard: React.FC<JobCardProps> = ({
   onClearError,
 }) => {
   const [confirmingUndo, setConfirmingUndo] = useState<boolean>(false);
+
+  useEffect(() => {
+    setConfirmingUndo(false);
+  }, [job?.source, job?.externalJobId]);
 
   // If job is loading from tab
   if (loading) {

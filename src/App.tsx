@@ -241,9 +241,7 @@ function PopupContent() {
         setApplicationError(errorMsg);
       }
     } finally {
-      if (currentActiveJobIdRef.current === targetJobId) {
-        setIsMutating(false);
-      }
+      setIsMutating(false);
     }
   };
 
@@ -275,9 +273,7 @@ function PopupContent() {
         setApplicationError(errorMsg);
       }
     } finally {
-      if (currentActiveJobIdRef.current === targetJobId) {
-        setIsMutating(false);
-      }
+      setIsMutating(false);
     }
   };
 
