@@ -1,16 +1,24 @@
 import { extractLinkedInJob } from "./linkedinJobExtractor";
 import { ExtensionMessage, Job } from "../types/job";
+import { WidgetManager } from "./widget/widgetManager";
 
 let lastJobId: string | null = null;
 let lastExtractedJob: Job | null = null;
 
+// Initialize the Day 4 Inline Widget Manager
+const widgetManager = new WidgetManager();
+
 function updateJobExtraction(): Job | null {
   const job = extractLinkedInJob(document, window.location.href);
+
+  // Notify the inline widget manager of current job detection
+  widgetManager.onJobDetected(job);
+
   if (job) {
     if (job.externalJobId !== lastJobId || !lastExtractedJob) {
       lastJobId = job.externalJobId;
       lastExtractedJob = job;
-      // Notify extension runtime if connected
+      // Notify extension runtime if connected (for open popup)
       try {
         if (chrome?.runtime?.sendMessage) {
           const msg: ExtensionMessage = {
@@ -29,7 +37,7 @@ function updateJobExtraction(): Job | null {
   return job;
 }
 
-// 1. Listen for requests from extension popup
+// 1. Listen for requests from extension popup (Day 1 functionality preserved)
 if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
     if (message.type === "GET_CURRENT_JOB") {

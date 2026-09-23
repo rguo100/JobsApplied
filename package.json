@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx src/types/__tests__/applicationIdentity.test.ts && tsx src/content/__tests__/linkedinJobExtractor.test.ts && tsx src/content/widget/__tests__/widgetLogic.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
