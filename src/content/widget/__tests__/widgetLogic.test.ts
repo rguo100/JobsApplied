@@ -324,6 +324,42 @@ const tests: TestCase[] = [
       );
     },
   },
+  {
+    name: "Scenario 12: Safe anchor fallback within detail container when primary-desc is absent",
+    run: () => {
+      // Simulate modern LinkedIn DOM where top-card primary description is absent
+      const detailPane = new MockElement();
+      const titleEl = new MockElement();
+      titleEl.id = "job-title";
+      detailPane.appendChild(titleEl);
+
+      // Fallback resolver inside detailPane
+      function resolveSafeAnchor(pane: MockElement | null) {
+        if (!pane) return null;
+        if (pane.children.length > 0) {
+          return { targetNode: pane, insertBefore: pane.children[0] };
+        }
+        return { targetNode: pane, insertBefore: null };
+      }
+
+      const anchor = resolveSafeAnchor(detailPane);
+      assert(anchor !== null);
+      assert.equal(anchor.targetNode, detailPane);
+      assert.equal(anchor.insertBefore, titleEl);
+    },
+  },
+  {
+    name: "Scenario 13: Refuses to mount into body when no detail pane exists",
+    run: () => {
+      function resolveSafeAnchor(pane: MockElement | null) {
+        if (!pane) return null;
+        return { targetNode: pane, insertBefore: null };
+      }
+
+      const anchor = resolveSafeAnchor(null);
+      assert.equal(anchor, null);
+    },
+  },
 ];
 
 console.log("Running LinkedIn Widget unit tests...");

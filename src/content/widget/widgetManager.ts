@@ -1,6 +1,13 @@
 import { Job, ExtensionMessage } from "../../types/job";
 import { Application } from "../../types/application";
 import { LinkedInWidget } from "./LinkedInWidget";
+import { getActiveDetailPane } from "../linkedinJobExtractor";
+
+interface MountAnchor {
+  targetNode: Node;
+  insertBefore: Node | null;
+  selectorMatched: string;
+}
 
 export class WidgetManager {
   private widget: LinkedInWidget | null = null;
@@ -28,6 +35,7 @@ export class WidgetManager {
     try {
       this.port = chrome.runtime.connect({ name: "appliedyet-widget" });
       this.isConnected = true;
+      console.log("[AppliedYet] background port connected");
 
       this.port.onMessage.addListener((msg: ExtensionMessage) => {
         this.handlePortMessage(msg);
@@ -46,8 +54,9 @@ export class WidgetManager {
           }
         }, 1500);
       });
-    } catch {
+    } catch (err) {
       this.isConnected = false;
+      console.warn("[AppliedYet] widget error: Failed to connect port:", err);
     }
   }
 
@@ -242,6 +251,9 @@ export class WidgetManager {
     const isNewJob = job.externalJobId !== this.currentJobId;
 
     if (isNewJob) {
+      console.log(`[AppliedYet] job detected: ${job.externalJobId}`);
+      console.log("[AppliedYet] widget manager update");
+
       // 1. Unsubscribe previous job
       if (this.currentJob && this.currentJobId) {
         this.unsubscribeFromJob(this.currentJob.source, this.currentJobId);
@@ -288,52 +300,130 @@ export class WidgetManager {
   }
 
   /**
-   * Finds the optimal LinkedIn mount anchor inside the job detail pane
+   * Finds the optimal LinkedIn mount anchor inside the active job detail pane.
+   * Scoped strictly inside getActiveDetailPane to never touch search results or body.
    */
-  private findMountAnchor(): { targetNode: Node; insertBefore: Node | null } | null {
-    // Priority 1: Top-card primary description block (contains company, location, posted date)
-    const primaryDesc = document.querySelector(
-      ".job-details-jobs-unified-top-card__primary-description, .jobs-unified-top-card__primary-description"
-    );
-    if (primaryDesc && primaryDesc.parentNode) {
-      // Place right after the primary description
-      return {
-        targetNode: primaryDesc.parentNode,
-        insertBefore: primaryDesc.nextSibling,
-      };
+  private findMountAnchor(jobId?: string | null): MountAnchor | null {
+    const detailPane = getActiveDetailPane(document);
+    if (!detailPane) {
+      return null;
     }
 
-    // Priority 2: Direct top-card container
-    const topCard = document.querySelector(
-      ".jobs-unified-top-card__content--two-pane, .job-details-jobs-unified-top-card, .jobs-unified-top-card, .top-card-layout"
-    );
-    if (topCard) {
-      // Check for action bar (Apply button container) to place directly before it
-      const actionsBar = topCard.querySelector(".jobs-unified-top-card__content--two-pane .mt5, .jobs-apply-button--top-card, .jobs-s-apply");
-      if (actionsBar && actionsBar.parentNode === topCard) {
+    // Priority 1: Top-card primary description / subtitle groupings inside the active detail pane
+    const PRIMARY_DESC_SELECTORS = [
+      ".job-details-jobs-unified-top-card__primary-description-container",
+      ".job-details-jobs-unified-top-card__primary-description",
+      ".jobs-unified-top-card__primary-description-container",
+      ".jobs-unified-top-card__primary-description",
+      ".jobs-unified-top-card__subtitle-secondary-grouping",
+      ".top-card-layout__first-subline",
+      ".jobs-unified-top-card__subtitle-primary-grouping",
+    ];
+
+    for (const selector of PRIMARY_DESC_SELECTORS) {
+      const el = detailPane.querySelector(selector);
+      if (el && el.parentNode) {
         return {
-          targetNode: topCard,
-          insertBefore: actionsBar,
+          targetNode: el.parentNode,
+          insertBefore: el.nextSibling,
+          selectorMatched: selector,
         };
       }
+    }
+
+    // Priority 2: Direct top-card container or action buttons bar (Apply buttons)
+    const ACTIONS_BAR_SELECTORS = [
+      ".jobs-apply-button--top-card",
+      ".jobs-s-apply",
+      ".jobs-unified-top-card__content--two-pane .mt5",
+      ".jobs-details__main-content .jobs-apply-button",
+      "[data-job-id] .jobs-apply-button",
+      ".jobs-apply-button",
+    ];
+
+    for (const selector of ACTIONS_BAR_SELECTORS) {
+      const el = detailPane.querySelector(selector);
+      if (el && el.parentNode) {
+        return {
+          targetNode: el.parentNode,
+          insertBefore: el,
+          selectorMatched: selector,
+        };
+      }
+    }
+
+    // Priority 3: Active Job link header or title element
+    if (jobId) {
+      const activeLink = detailPane.querySelector(`a[href*="/jobs/view/${jobId}/"]`);
+      if (activeLink) {
+        const headerContainer = activeLink.closest("p, div, header, section") || activeLink;
+        if (headerContainer && headerContainer.parentNode && headerContainer.parentNode !== document.body) {
+          return {
+            targetNode: headerContainer.parentNode,
+            insertBefore: headerContainer.nextSibling,
+            selectorMatched: "active-job-link-header",
+          };
+        }
+      }
+    }
+
+    const TITLE_SELECTORS = [
+      "h1.job-details-jobs-unified-top-card__job-title",
+      "h1.jobs-unified-top-card__job-title",
+      ".job-details-jobs-unified-top-card__job-title",
+      "h2.topcard__title",
+      "h1.top-card-layout__title",
+      ".jobs-details__main-content h1",
+      ".job-view-layout h1",
+      "h1",
+    ];
+
+    for (const selector of TITLE_SELECTORS) {
+      const el = detailPane.querySelector(selector);
+      if (el && el.parentNode && el.parentNode !== document.body) {
+        return {
+          targetNode: el.parentNode,
+          insertBefore: el.nextSibling,
+          selectorMatched: selector,
+        };
+      }
+    }
+
+    // Priority 4: Before Job Description Content Body
+    const BODY_SELECTORS = [
+      "#job-details",
+      ".jobs-description",
+      ".jobs-box__html-content",
+      ".jobs-description__content",
+      ".jobs-description-content",
+      "article.jobs-description__container",
+    ];
+
+    for (const selector of BODY_SELECTORS) {
+      const el = detailPane.querySelector(selector);
+      if (el && el.parentNode && el.parentNode !== document.body) {
+        return {
+          targetNode: el.parentNode,
+          insertBefore: el,
+          selectorMatched: `before-${selector}`,
+        };
+      }
+    }
+
+    // Priority 5: Safe Detail Pane Top Fallback (strictly inside detailPane, NEVER document.body)
+    if (detailPane.firstElementChild) {
       return {
-        targetNode: topCard,
-        insertBefore: topCard.firstChild,
+        targetNode: detailPane,
+        insertBefore: detailPane.firstElementChild,
+        selectorMatched: "detail-pane-top",
       };
     }
 
-    // Priority 3: Main job detail layout container
-    const detailMain = document.querySelector(
-      ".jobs-details__main-content, .job-view-layout, .jobs-search__job-details"
-    );
-    if (detailMain) {
-      return {
-        targetNode: detailMain,
-        insertBefore: detailMain.firstChild,
-      };
-    }
-
-    return null;
+    return {
+      targetNode: detailPane,
+      insertBefore: null,
+      selectorMatched: "detail-pane-append",
+    };
   }
 
   /**
@@ -349,25 +439,25 @@ export class WidgetManager {
 
     const widgetRoot = this.widget.getRootElement();
     const existingElement = document.getElementById("appliedyet-job-widget-root");
-    const anchor = this.findMountAnchor();
+    const anchor = this.findMountAnchor(this.currentJobId);
 
     if (!anchor) {
-      // Detail pane not yet in DOM, will retry via observer
+      console.warn("[AppliedYet] Job detected but no safe widget anchor found");
       return;
     }
 
     // Duplicate Prevention Check:
-    // If an element with this ID already exists in DOM
     if (existingElement) {
-      // If it's our widget and it is already in the right anchor position, nothing to do
+      // If it's our widget and it is already attached to the live DOM in the right parent
       if (
         existingElement === widgetRoot &&
-        existingElement.parentNode === anchor.targetNode
+        existingElement.parentNode === anchor.targetNode &&
+        document.body.contains(existingElement)
       ) {
         widgetRoot.style.display = "block";
         return;
       }
-      // If it is in an outdated location, remove the stale element
+      // If it is stale or in an outdated location, remove the stale element
       if (existingElement.parentNode) {
         existingElement.parentNode.removeChild(existingElement);
       }
@@ -381,8 +471,12 @@ export class WidgetManager {
         anchor.targetNode.appendChild(widgetRoot);
       }
       widgetRoot.style.display = "block";
+      widgetRoot.style.width = "100%";
+      widgetRoot.style.boxSizing = "border-box";
+      console.log(`[AppliedYet] anchor found: ${anchor.selectorMatched}`);
+      console.log("[AppliedYet] widget root mounted");
     } catch (err) {
-      console.warn("[AppliedYet Widget] Failed to mount widget:", err);
+      console.warn("[AppliedYet] widget error: Failed to mount widget root:", err);
     }
   }
 

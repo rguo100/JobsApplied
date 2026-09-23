@@ -25,13 +25,15 @@
   },
   "host_permissions": [
     "https://*.linkedin.com/jobs/*",
-    "https://*.linkedin.com/jobs/view/*"
+    "https://*.linkedin.com/jobs/view/*",
+    "https://*.linkedin.com/jobs*"
   ],
   "content_scripts": [
     {
       "matches": [
         "https://*.linkedin.com/jobs/*",
-        "https://*.linkedin.com/jobs/view/*"
+        "https://*.linkedin.com/jobs/view/*",
+        "https://*.linkedin.com/jobs*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"

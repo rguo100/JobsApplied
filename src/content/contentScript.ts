@@ -2,6 +2,8 @@ import { extractLinkedInJob } from "./linkedinJobExtractor";
 import { ExtensionMessage, Job } from "../types/job";
 import { WidgetManager } from "./widget/widgetManager";
 
+console.log("[AppliedYet] content script initialized");
+
 let lastJobId: string | null = null;
 let lastExtractedJob: Job | null = null;
 

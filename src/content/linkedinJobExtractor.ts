@@ -425,7 +425,7 @@ export function extractLinkedInJob(
   currentUrl: string = window.location.href
 ): Job | null {
   const isLinkedInHost = currentUrl.includes("linkedin.com");
-  const isJobPath = currentUrl.includes("/jobs/");
+  const isJobPath = currentUrl.includes("/jobs/") || currentUrl.includes("/jobs?") || currentUrl.endsWith("/jobs");
 
   if (!isLinkedInHost || !isJobPath) {
     return null;

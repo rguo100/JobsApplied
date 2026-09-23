@@ -56,11 +56,17 @@ export class LinkedInWidget {
   private shadow: ShadowRoot;
   private state: WidgetState;
   private callbacks: WidgetCallbacks;
+  private lastRenderedMode: string | null = null;
 
   constructor(callbacks: WidgetCallbacks) {
     this.callbacks = callbacks;
     this.container = document.createElement("div");
     this.container.id = "appliedyet-job-widget-root";
+    this.container.style.display = "block";
+    this.container.style.width = "100%";
+    this.container.style.maxWidth = "100%";
+    this.container.style.boxSizing = "border-box";
+    this.container.style.margin = "10px 0";
     this.shadow = this.container.attachShadow({ mode: "open" });
 
     this.state = {
@@ -93,6 +99,11 @@ export class LinkedInWidget {
 
   private render() {
     const { mode, job, application, isMutating, errorMessage, confirmingUndo } = this.state;
+
+    if (mode !== this.lastRenderedMode) {
+      this.lastRenderedMode = mode;
+      console.log(`[AppliedYet] widget render state: ${mode}`);
+    }
 
     const styles = `
       :host {
