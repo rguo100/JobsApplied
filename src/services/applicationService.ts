@@ -1,4 +1,5 @@
 import {
+  collection,
   doc,
   getDoc,
   setDoc,
@@ -229,5 +230,57 @@ export async function deleteApplication(
   } catch (error) {
     console.error("AppliedYet: Failed to delete application:", error);
     throw error;
+  }
+}
+
+/**
+ * Subscribes to real-time updates for all applications of a given user.
+ * Returns an unsubscribe function.
+ */
+export function subscribeToUserApplications(
+  uid: string,
+  onUpdate: (applications: Application[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  if (!isFirebaseConfigured() || !db || !uid) {
+    onUpdate([]);
+    return () => {};
+  }
+
+  try {
+    const colRef = collection(db, "users", uid, "applications");
+
+    const unsubscribe = onSnapshot(
+      colRef,
+      (snapshot) => {
+        const applications: Application[] = [];
+        snapshot.forEach((docSnap) => {
+          applications.push(docSnap.data() as Application);
+        });
+
+        // Deterministic sort: latest appliedAt or createdAt first
+        applications.sort((a, b) => {
+          const timeA = a.appliedAt?.toMillis?.() ?? a.createdAt?.toMillis?.() ?? 0;
+          const timeB = b.appliedAt?.toMillis?.() ?? b.createdAt?.toMillis?.() ?? 0;
+          return timeB - timeA;
+        });
+
+        onUpdate(applications);
+      },
+      (err) => {
+        console.error("AppliedYet: Real-time user applications sync error:", err);
+        if (onError) {
+          onError(err);
+        }
+      }
+    );
+
+    return unsubscribe;
+  } catch (err) {
+    console.error("AppliedYet: Failed to establish user applications listener:", err);
+    if (onError && err instanceof Error) {
+      onError(err);
+    }
+    return () => {};
   }
 }

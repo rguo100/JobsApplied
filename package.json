@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "vite build",
+    "build": "npm run build:extension && npm run build:web",
+    "build:extension": "vite build --config vite.config.ts",
+    "build:web": "vite build --config vite.web.config.ts",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "rm -rf dist dist-web server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx src/types/__tests__/applicationIdentity.test.ts && tsx src/content/__tests__/linkedinJobExtractor.test.ts && tsx src/content/widget/__tests__/widgetLogic.test.ts && tsx src/content/__tests__/day41Concurrency.test.ts"
+    "test": "tsx src/types/__tests__/applicationIdentity.test.ts && tsx src/content/__tests__/linkedinJobExtractor.test.ts && tsx src/content/widget/__tests__/widgetLogic.test.ts && tsx src/content/__tests__/day41Concurrency.test.ts && tsx src/dashboard/__tests__/dashboardLogic.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
