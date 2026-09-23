@@ -12,7 +12,12 @@ import {
 } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "../firebase/config";
 import { Application, ApplicationStatus, getApplicationDocId } from "../types/application";
-import { Job } from "../types/job";
+import {
+  Job,
+  isFallbackCompany,
+  isFallbackLocation,
+  isFallbackTitle,
+} from "../types/job";
 
 /**
  * Returns a document reference for an application under users/{uid}/applications/{applicationId}
@@ -164,13 +169,29 @@ export async function markJobAsApplied(uid: string, job: Job): Promise<void> {
     ? (existingSnap.data() as Application)
     : null;
 
+  const existingCompany = existingApplication?.company;
+  const existingLocation = existingApplication?.location;
+  const existingTitle = existingApplication?.title;
+
+  const company = !isFallbackCompany(job.company)
+    ? job.company
+    : (!isFallbackCompany(existingCompany) ? existingCompany! : (job.company || "Unknown Company"));
+
+  const location = !isFallbackLocation(job.location)
+    ? job.location
+    : (!isFallbackLocation(existingLocation) ? existingLocation! : (job.location || "Location not specified"));
+
+  const title = !isFallbackTitle(job.title)
+    ? job.title
+    : (!isFallbackTitle(existingTitle) ? existingTitle! : (job.title || "Job Title"));
+
   const payload: WithFieldValue<Application> = {
     source: "linkedin",
     externalJobId: job.externalJobId,
-    company: job.company || "Unknown Company",
-    title: job.title || "Job Title",
-    location: job.location || "Location not specified",
-    url: job.url || "",
+    company,
+    title,
+    location,
+    url: job.url || existingApplication?.url || "",
     status: "applied",
     appliedAt: existingApplication?.appliedAt || serverTimestamp(),
     createdAt: existingApplication?.createdAt || serverTimestamp(),

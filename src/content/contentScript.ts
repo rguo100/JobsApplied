@@ -1,5 +1,10 @@
 import { extractLinkedInJob } from "./linkedinJobExtractor";
-import { ExtensionMessage, Job } from "../types/job";
+import {
+  ExtensionMessage,
+  Job,
+  hasBetterJobMetadata,
+  mergeJobMetadata,
+} from "../types/job";
 import { WidgetManager } from "./widget/widgetManager";
 import { createAnimationFrameCoalescer } from "./animationFrameCoalescer";
 
@@ -7,6 +12,22 @@ console.log("[AppliedYet] content script initialized");
 
 let lastJobId: string | null = null;
 let lastExtractedJob: Job | null = null;
+
+function notifyJobUpdated(job: Job) {
+  try {
+    if (chrome?.runtime?.sendMessage) {
+      const msg: ExtensionMessage = {
+        type: "JOB_UPDATED",
+        job,
+      };
+      chrome.runtime.sendMessage(msg).catch(() => {
+        // Popup may not be open, safe to ignore
+      });
+    }
+  } catch {
+    // Runtime context unavailable
+  }
+}
 
 // Initialize the Day 4 Inline Widget Manager
 const widgetManager = new WidgetManager();
@@ -18,23 +39,14 @@ function updateJobExtraction(): Job | null {
   widgetManager.onJobDetected(job);
 
   if (job) {
-    if (job.externalJobId !== lastJobId || !lastExtractedJob) {
+    const isNewJob = job.externalJobId !== lastJobId || !lastExtractedJob;
+    if (isNewJob) {
       lastJobId = job.externalJobId;
       lastExtractedJob = job;
-      // Notify extension runtime if connected (for open popup)
-      try {
-        if (chrome?.runtime?.sendMessage) {
-          const msg: ExtensionMessage = {
-            type: "JOB_UPDATED",
-            job: lastExtractedJob,
-          };
-          chrome.runtime.sendMessage(msg).catch(() => {
-            // Popup may not be open, safe to ignore
-          });
-        }
-      } catch {
-        // Runtime context unavailable
-      }
+      notifyJobUpdated(lastExtractedJob);
+    } else if (lastExtractedJob && hasBetterJobMetadata(lastExtractedJob, job)) {
+      lastExtractedJob = mergeJobMetadata(lastExtractedJob, job);
+      notifyJobUpdated(lastExtractedJob);
     }
   }
   return job;

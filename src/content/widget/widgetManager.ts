@@ -3,10 +3,16 @@ import {
   ExtensionMessage,
   MutationIdentity,
   matchesMutationIdentity,
+  hasBetterJobMetadata,
+  mergeJobMetadata,
 } from "../../types/job";
 import { Application } from "../../types/application";
 import { LinkedInWidget } from "./LinkedInWidget";
-import { getActiveDetailPane, isBroadMainDetailPane } from "../linkedinJobExtractor";
+import {
+  getActiveDetailPane,
+  isBroadMainDetailPane,
+  extractLinkedInJob,
+} from "../linkedinJobExtractor";
 
 interface MountAnchor {
   targetNode: Node;
@@ -174,6 +180,25 @@ export class WidgetManager {
    * Handles user clicking "Mark as Applied" in the inline widget
    */
   private async handleMarkApplied(): Promise<void> {
+    // Before dispatching mutation, perform a fresh live DOM check to guarantee
+    // the richest extracted metadata if LinkedIn finished rendering detail pane
+    if (typeof document !== "undefined" && typeof window !== "undefined") {
+      try {
+        const liveJob = extractLinkedInJob(document, window.location.href);
+        if (
+          liveJob &&
+          liveJob.externalJobId === this.currentJobId &&
+          this.currentJob &&
+          hasBetterJobMetadata(this.currentJob, liveJob)
+        ) {
+          this.currentJob = mergeJobMetadata(this.currentJob, liveJob);
+          this.widget?.setState({ job: this.currentJob });
+        }
+      } catch {
+        // Safe fallback to current this.currentJob
+      }
+    }
+
     const job = this.currentJob;
     if (!job) throw new Error("No active job detected.");
 
@@ -325,7 +350,23 @@ export class WidgetManager {
         this.subscribeToCurrentJob();
       }
     } else {
-      // Same job detected again (e.g. minor DOM update): ensure widget root is still properly attached
+      // Same job detected again (e.g. DOM update or detail pane finished rendering):
+      // Refresh active metadata if the new extraction has non-fallback values
+      if (this.currentJob) {
+        if (hasBetterJobMetadata(this.currentJob, job)) {
+          const merged = mergeJobMetadata(this.currentJob, job);
+          console.log(
+            `[AppliedYet] Refreshed metadata for job ${job.externalJobId}: ${merged.company} - ${merged.location}`
+          );
+          this.currentJob = merged;
+          // Refresh widget internal job reference without altering subscription or mode
+          this.widget?.setState({
+            job: merged,
+          });
+        }
+      } else {
+        this.currentJob = job;
+      }
       this.scheduleMountCheck();
     }
   }
