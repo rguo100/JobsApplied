@@ -23,12 +23,42 @@ export interface Application {
 }
 
 /**
+ * Structured application identity representing source and external job ID.
+ */
+export interface ApplicationIdentity {
+  source: "linkedin";
+  externalJobId: string;
+  conceptualId: string; // e.g. "linkedin:3981726450"
+  documentId: string;   // e.g. "linkedin_3981726450"
+}
+
+/**
+ * Generates deterministic application identity using source + externalJobId.
+ * Sanitizes forbidden Firestore characters (such as slashes) to ensure a safe,
+ * collision-resistant document ID.
+ */
+export function getApplicationIdentity(
+  source: string = "linkedin",
+  externalJobId: string
+): ApplicationIdentity {
+  const cleanSource = (source || "linkedin").toLowerCase().trim() === "linkedin" ? "linkedin" : "linkedin";
+  const cleanId = (externalJobId || "").trim();
+  // Sanitize characters that could disrupt Firestore pathing (slashes, whitespace, etc.)
+  const sanitizedId = cleanId.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+  return {
+    source: cleanSource,
+    externalJobId: cleanId,
+    conceptualId: `${cleanSource}:${cleanId}`,
+    documentId: `${cleanSource}_${sanitizedId}`,
+  };
+}
+
+/**
  * Generates a deterministic Firestore document ID for an application.
- * Format: {source}_{externalJobId} (e.g. linkedin_4462326890)
+ * Format: {source}_{externalJobId} (e.g. linkedin_3981726450)
  * Ensures that the same job does not create duplicate documents for the same user.
  */
 export function getApplicationDocId(source: string, externalJobId: string): string {
-  const cleanSource = (source || "linkedin").toLowerCase().trim();
-  const cleanId = (externalJobId || "").trim();
-  return `${cleanSource}_${cleanId}`;
+  return getApplicationIdentity(source, externalJobId).documentId;
 }

@@ -1,7 +1,13 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Job, ExtensionMessage } from "./types/job";
+import { Application } from "./types/application";
 import { JobCard } from "./components/JobCard";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import {
+  subscribeToApplication,
+  markJobAsApplied,
+  deleteApplication,
+} from "./services/applicationService";
 import {
   BookmarkCheck,
   RefreshCw,
@@ -46,6 +52,15 @@ function PopupContent() {
   const [jobLoading, setJobLoading] = useState<boolean>(true);
   const [isLinkedInPage, setIsLinkedInPage] = useState<boolean>(false);
   const [isExtensionEnv, setIsExtensionEnv] = useState<boolean>(false);
+
+  // Day 3 Application tracking state
+  const [application, setApplication] = useState<Application | null>(null);
+  const [applicationLoading, setApplicationLoading] = useState<boolean>(false);
+  const [applicationError, setApplicationError] = useState<string | null>(null);
+  const [isMutating, setIsMutating] = useState<boolean>(false);
+
+  // Tracks the active job ID for SPA safety and stale-response rejection
+  const currentActiveJobIdRef = useRef<string | null>(null);
 
   // Function to fetch active job from active tab
   const fetchActiveTabJob = useCallback(() => {
@@ -117,6 +132,7 @@ function PopupContent() {
     }
   }, []);
 
+  // Listen for active tab changes and message events from LinkedIn content script (Day 1 SPA handling)
   useEffect(() => {
     fetchActiveTabJob();
 
@@ -141,6 +157,129 @@ function PopupContent() {
       // Ignore if outside extension runtime
     }
   }, [fetchActiveTabJob]);
+
+  // SPA Stale-Data Safety: Subscribe to active job's Firestore application record
+  useEffect(() => {
+    const currentJob = job;
+    const activeJobId = currentJob?.externalJobId || null;
+    currentActiveJobIdRef.current = activeJobId;
+    setApplicationError(null);
+
+    // If unauthenticated or no job detected, clear application state immediately
+    if (!user || !currentJob || !activeJobId) {
+      setApplication(null);
+      setApplicationLoading(false);
+      return;
+    }
+
+    // Immediately show loading for new job and clear previous job's state to prevent leaks
+    setApplication(null);
+    setApplicationLoading(true);
+
+    let isDisposed = false;
+
+    const unsubscribe = subscribeToApplication(
+      user.uid,
+      currentJob.source,
+      activeJobId,
+      (updatedApp) => {
+        // Guard against stale asynchronous callbacks if the user rapidly navigated away
+        if (isDisposed || currentActiveJobIdRef.current !== activeJobId) {
+          return;
+        }
+        setApplication(updatedApp);
+        setApplicationLoading(false);
+        setApplicationError(null);
+      },
+      (err) => {
+        if (isDisposed || currentActiveJobIdRef.current !== activeJobId) {
+          return;
+        }
+        console.error("AppliedYet: Application read error:", err);
+        setApplicationError(err.message || "Failed to load application status.");
+        setApplicationLoading(false);
+      }
+    );
+
+    return () => {
+      isDisposed = true;
+      try {
+        unsubscribe();
+      } catch {
+        // Safe cleanup
+      }
+    };
+  }, [user, job?.externalJobId, job?.source]);
+
+  // Core Action: Mark as Applied
+  const handleMarkAsApplied = async () => {
+    if (!user) {
+      setApplicationError("Please sign in with Google to track applications.");
+      return;
+    }
+    if (!job || !job.externalJobId) {
+      setApplicationError("No active LinkedIn job detected.");
+      return;
+    }
+    if (isMutating) {
+      return;
+    }
+
+    const targetJob = job;
+    const targetJobId = job.externalJobId;
+    setIsMutating(true);
+    setApplicationError(null);
+
+    try {
+      await markJobAsApplied(user.uid, targetJob);
+      // Real-time onSnapshot will update `application` automatically
+    } catch (err: unknown) {
+      console.error("AppliedYet: Failed to mark job as applied:", err);
+      // Only set error if still on the same job
+      if (currentActiveJobIdRef.current === targetJobId) {
+        const errorMsg = err instanceof Error ? err.message : "Failed to save application to Firestore.";
+        setApplicationError(errorMsg);
+      }
+    } finally {
+      if (currentActiveJobIdRef.current === targetJobId) {
+        setIsMutating(false);
+      }
+    }
+  };
+
+  // Core Action: Undo (Delete application record)
+  const handleUndo = async () => {
+    if (!user) {
+      setApplicationError("Please sign in with Google.");
+      return;
+    }
+    if (!job || !job.externalJobId) {
+      return;
+    }
+    if (isMutating) {
+      return;
+    }
+
+    const targetJobId = job.externalJobId;
+    const targetSource = job.source;
+    setIsMutating(true);
+    setApplicationError(null);
+
+    try {
+      await deleteApplication(user.uid, targetSource, targetJobId);
+      // Real-time onSnapshot will set `application` to null automatically
+    } catch (err: unknown) {
+      console.error("AppliedYet: Failed to undo application:", err);
+      if (currentActiveJobIdRef.current === targetJobId) {
+        const errorMsg = err instanceof Error ? err.message : "Failed to remove application from Firestore.";
+        setApplicationError(errorMsg);
+      }
+    } finally {
+      if (currentActiveJobIdRef.current === targetJobId) {
+        setIsMutating(false);
+      }
+    }
+  };
 
   // If authentication state is checking
   if (authLoading) {
@@ -285,12 +424,19 @@ function PopupContent() {
               </span>
             </div>
 
-            {/* Job Details Card */}
+            {/* Job Details & Application Tracker Card */}
             <JobCard
               job={job}
               loading={jobLoading}
               isLinkedInPage={isLinkedInPage}
               onRefresh={fetchActiveTabJob}
+              application={application}
+              applicationLoading={applicationLoading}
+              applicationError={applicationError}
+              isMutating={isMutating}
+              onMarkApplied={handleMarkAsApplied}
+              onUndo={handleUndo}
+              onClearError={() => setApplicationError(null)}
             />
           </div>
         )}
@@ -332,7 +478,7 @@ function PopupContent() {
       {/* Footer */}
       <footer className="mt-4 text-center">
         <p className="text-[10px] text-slate-400">
-          AppliedYet MVP &bull; Manifest V3
+          AppliedYet &bull; Manifest V3
         </p>
       </footer>
     </div>

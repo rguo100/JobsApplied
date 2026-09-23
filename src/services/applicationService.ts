@@ -4,17 +4,19 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  onSnapshot,
   serverTimestamp,
   Timestamp,
   WithFieldValue,
 } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "../firebase/config";
 import { Application, ApplicationStatus, getApplicationDocId } from "../types/application";
+import { Job } from "../types/job";
 
 /**
  * Returns a document reference for an application under users/{uid}/applications/{applicationId}
  */
-function getApplicationDocRef(uid: string, source: string, externalJobId: string) {
+export function getApplicationDocRef(uid: string, source: string, externalJobId: string) {
   if (!db) {
     throw new Error("Firestore is not initialized. Please verify your Firebase configuration.");
   }
@@ -23,6 +25,52 @@ function getApplicationDocRef(uid: string, source: string, externalJobId: string
   }
   const applicationId = getApplicationDocId(source, externalJobId);
   return doc(db, "users", uid, "applications", applicationId);
+}
+
+/**
+ * Subscribes to real-time updates for an application document.
+ * Returns an unsubscribe function.
+ */
+export function subscribeToApplication(
+  uid: string,
+  source: string,
+  externalJobId: string,
+  onUpdate: (application: Application | null) => void,
+  onError?: (error: Error) => void
+): () => void {
+  if (!isFirebaseConfigured() || !db || !uid || !externalJobId) {
+    onUpdate(null);
+    return () => {};
+  }
+
+  try {
+    const docRef = getApplicationDocRef(uid, source, externalJobId);
+
+    const unsubscribe = onSnapshot(
+      docRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          onUpdate(null);
+        } else {
+          onUpdate(snapshot.data() as Application);
+        }
+      },
+      (err) => {
+        console.error("AppliedYet: Real-time application sync error:", err);
+        if (onError) {
+          onError(err);
+        }
+      }
+    );
+
+    return unsubscribe;
+  } catch (err) {
+    console.error("AppliedYet: Failed to establish application listener:", err);
+    if (onError && err instanceof Error) {
+      onError(err);
+    }
+    return () => {};
+  }
 }
 
 /**
@@ -54,6 +102,7 @@ export async function getApplication(
 
 /**
  * Saves or creates an application record under users/{uid}/applications/{applicationId}.
+ * Idempotent: multiple calls for the same job will update/merge the existing document.
  */
 export async function saveApplication(
   uid: string,
@@ -97,6 +146,40 @@ export async function saveApplication(
 }
 
 /**
+ * High-level helper to mark a job as applied in Firestore.
+ * Conforms to Day 3 core workflow requirements.
+ */
+export async function markJobAsApplied(uid: string, job: Job): Promise<void> {
+  if (!isFirebaseConfigured() || !db || !uid) {
+    throw new Error("Firebase is not configured or user is unauthenticated.");
+  }
+  if (!job.externalJobId) {
+    throw new Error("Cannot track job without valid externalJobId.");
+  }
+
+  const docRef = getApplicationDocRef(uid, job.source, job.externalJobId);
+  const existingSnap = await getDoc(docRef);
+  const existingApplication = existingSnap.exists()
+    ? (existingSnap.data() as Application)
+    : null;
+
+  const payload: WithFieldValue<Application> = {
+    source: "linkedin",
+    externalJobId: job.externalJobId,
+    company: job.company || "Unknown Company",
+    title: job.title || "Job Title",
+    location: job.location || "Location not specified",
+    url: job.url || "",
+    status: "applied",
+    appliedAt: existingApplication?.appliedAt || serverTimestamp(),
+    createdAt: existingApplication?.createdAt || serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  await setDoc(docRef, payload, { merge: true });
+}
+
+/**
  * Updates the status of an existing application.
  */
 export async function updateApplicationStatus(
@@ -129,6 +212,7 @@ export async function updateApplicationStatus(
 
 /**
  * Deletes an application record from users/{uid}/applications/{applicationId}.
+ * Used for the Undo workflow.
  */
 export async function deleteApplication(
   uid: string,
