@@ -42,6 +42,14 @@ export const Header: React.FC<HeaderProps> = ({ user, onSignOut }) => {
 
           {/* User profile & Sign Out */}
           <div className="flex items-center space-x-4">
+            <a
+              href="/"
+              className="hidden sm:inline-flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-violet-700 bg-violet-50 hover:bg-violet-100 rounded-md border border-violet-200 transition"
+              title="View Chrome Extension popup simulator"
+            >
+              <span>Extension Simulator</span>
+            </a>
+
             {/* UID verification badge for Day 5 acceptance test */}
             <div
               onClick={handleCopyUid}

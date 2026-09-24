@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useWebAuth } from "../context/WebAuthContext";
 import { Header } from "./Header";
 import { SummaryCards } from "./SummaryCards";
+import { FilterBar } from "./FilterBar";
 import { ApplicationTable } from "./ApplicationTable";
 import { DeleteConfirmModal } from "./DeleteConfirmModal";
 import { EmptyState } from "./EmptyState";
@@ -20,6 +21,13 @@ import {
   getPendingDeleteForUid,
   PendingDelete,
 } from "./dashboardLifecycle";
+import {
+  SortOption,
+  calculateSummaryCounts,
+  extractUniqueCompanies,
+  filterAndSortApplications,
+  sanitizeDashboardErrorMessage,
+} from "./utils/dashboardFilter";
 
 export const DashboardApp: React.FC = () => {
   const {
@@ -40,12 +48,46 @@ export const DashboardApp: React.FC = () => {
   const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [retryCounter, setRetryCounter] = useState<number>(0);
+
+  // Day 6 Search, Filter, and Sort states
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<ApplicationStatus | "all">("all");
+  const [companyFilter, setCompanyFilter] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<SortOption>("newest");
+
   const currentUid = user?.uid ?? null;
   const visibleDashboardData = getDashboardDataForUid(dashboardData, currentUid);
   const applications = visibleDashboardData.applications;
   const dataLoading = visibleDashboardData.loading;
   const syncError = visibleDashboardData.error;
   const visiblePendingDelete = getPendingDeleteForUid(pendingDelete, currentUid);
+
+  // Summary counts across ALL user applications (never altered by search/filter)
+  const summaryCounts = useMemo(() => {
+    return calculateSummaryCounts(applications);
+  }, [applications]);
+
+  // Unique companies dynamically extracted and sorted alphabetically
+  const uniqueCompanies = useMemo(() => {
+    return extractUniqueCompanies(applications);
+  }, [applications]);
+
+  // Filtered & sorted application list for display
+  const filteredApplications = useMemo(() => {
+    return filterAndSortApplications(applications, {
+      searchQuery,
+      statusFilter,
+      companyFilter,
+      sortBy,
+    });
+  }, [applications, searchQuery, statusFilter, companyFilter, sortBy]);
+
+  const handleClearFilters = useCallback(() => {
+    setSearchQuery("");
+    setStatusFilter("all");
+    setCompanyFilter("all");
+    setSortBy("newest");
+  }, []);
 
   const handleRetry = useCallback(() => {
     setDashboardData((current) => ({
@@ -87,12 +129,13 @@ export const DashboardApp: React.FC = () => {
         });
       },
       (err) => {
-        // As required: "Do not display stale data as current after a subscription error."
+        // Sanitize raw Firebase error to a user-friendly message
+        const friendlyMessage = sanitizeDashboardErrorMessage(err);
         setDashboardData({
           ownerUid: subscribedUid,
           applications: [],
           loading: false,
-          error: err.message || "Failed to synchronize applications.",
+          error: friendlyMessage,
         });
       }
     );
@@ -108,7 +151,7 @@ export const DashboardApp: React.FC = () => {
       await updateApplicationStatus(user.uid, app.source, app.externalJobId, newStatus);
     } catch (err: any) {
       console.error("[AppliedYet Dashboard] Status update error:", err);
-      alert(err instanceof Error ? err.message : "Failed to update status.");
+      alert(sanitizeDashboardErrorMessage(err));
     }
   };
 
@@ -130,7 +173,7 @@ export const DashboardApp: React.FC = () => {
       setPendingDelete(null);
     } catch (err: any) {
       console.error("[AppliedYet Dashboard] Delete error:", err);
-      alert(err instanceof Error ? err.message : "Failed to remove application.");
+      alert(sanitizeDashboardErrorMessage(err));
     }
   };
 
@@ -171,7 +214,7 @@ export const DashboardApp: React.FC = () => {
           <h2 className="mt-4 text-center text-3xl font-extrabold text-gray-900 tracking-tight">
             AppliedYet
           </h2>
-          <p className="mt-2 text-center text-sm text-gray-600 max-w">
+          <p className="mt-2 text-center text-sm text-gray-600">
             Track every job application in one place.
           </p>
         </div>
@@ -203,7 +246,7 @@ export const DashboardApp: React.FC = () => {
               type="button"
               disabled={isSigningIn}
               onClick={handleGoogleSignIn}
-              className="w-full flex items-center justify-center space-x-3 py-3 px-4 border border-gray-300 rounded-xl shadow-xs bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-hidden focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 transition disabled:opacity-50"
+              className="w-full flex items-center justify-center space-x-3 py-3 px-4 border border-gray-300 rounded-xl shadow-xs bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-hidden focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 transition disabled:opacity-50 cursor-pointer"
             >
               {/* Google G Logo SVG */}
               <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -242,8 +285,8 @@ export const DashboardApp: React.FC = () => {
       <Header user={user} onSignOut={signOutUser} />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Top Summary */}
-        <SummaryCards totalCount={applications.length} />
+        {/* Top Summary Cards with all 5 counts */}
+        <SummaryCards counts={summaryCounts} />
 
         {/* Content Area */}
         {dataLoading ? (
@@ -254,15 +297,38 @@ export const DashboardApp: React.FC = () => {
             </p>
           </div>
         ) : syncError ? (
-          <EmptyState error={syncError} onRetry={handleRetry} />
+          <EmptyState type="error" error={syncError} onRetry={handleRetry} />
         ) : applications.length === 0 ? (
-          <EmptyState />
+          <EmptyState type="empty_database" />
         ) : (
-          <ApplicationTable
-            applications={applications}
-            onStatusChange={handleStatusChange}
-            onRequestDelete={(app) => setPendingDelete({ uid: user.uid, application: app })}
-          />
+          <>
+            {/* Filter and Search Bar */}
+            <FilterBar
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              statusFilter={statusFilter}
+              onStatusChange={setStatusFilter}
+              companyFilter={companyFilter}
+              onCompanyChange={setCompanyFilter}
+              sortBy={sortBy}
+              onSortChange={setSortBy}
+              companies={uniqueCompanies}
+              totalCount={applications.length}
+              filteredCount={filteredApplications.length}
+              onClearFilters={handleClearFilters}
+            />
+
+            {/* Table or Empty Filter Results */}
+            {filteredApplications.length === 0 ? (
+              <EmptyState type="empty_filter" onClearFilters={handleClearFilters} />
+            ) : (
+              <ApplicationTable
+                applications={filteredApplications}
+                onStatusChange={handleStatusChange}
+                onRequestDelete={(app) => setPendingDelete({ uid: user.uid, application: app })}
+              />
+            )}
+          </>
         )}
       </main>
 

@@ -468,6 +468,16 @@ function PopupContent() {
               </button>
             ))}
           </div>
+
+          <div className="mt-2.5 pt-2 border-t border-slate-200 flex items-center justify-between">
+            <span className="text-[10px] text-slate-400">Web Dashboard:</span>
+            <a
+              href="/web.html"
+              className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 underline flex items-center gap-1"
+            >
+              Open Web Dashboard &rarr;
+            </a>
+          </div>
         </div>
       )}
 
