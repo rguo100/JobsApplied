@@ -1,6 +1,7 @@
 import { Job } from "../../types/job";
 import { Application } from "../../types/application";
 import { Timestamp } from "firebase/firestore";
+import { getApplicationStatusLabel } from "../../utils/applicationStatus";
 
 export interface WidgetCallbacks {
   onMarkApplied: () => Promise<void>;
@@ -164,6 +165,21 @@ export class LinkedInWidget {
         color: #15803d;
         border: 1px solid #bbf7d0;
       }
+      .pill-interview {
+        background: #fef3c7;
+        color: #b45309;
+        border: 1px solid #fde68a;
+      }
+      .pill-rejected {
+        background: #ffe4e6;
+        color: #be123c;
+        border: 1px solid #fecdd3;
+      }
+      .pill-offer {
+        background: #ecfdf5;
+        color: #047857;
+        border: 1px solid #a7f3d0;
+      }
       .pill-not-applied {
         background: #f1f5f9;
         color: #64748b;
@@ -188,11 +204,20 @@ export class LinkedInWidget {
       .text-applied {
         color: #166534;
       }
+      .text-interview {
+        color: #b45309;
+      }
+      .text-rejected {
+        color: #b91c1c;
+      }
+      .text-offer {
+        color: #047857;
+      }
       .text-not-applied {
         color: #475569;
       }
       .text-date {
-        color: #15803d;
+        color: #64748b;
         font-size: 12px;
         font-weight: 500;
         margin-left: 4px;
@@ -338,9 +363,54 @@ export class LinkedInWidget {
         </div>
       `;
     }
-    // STATE 2 — APPLIED
+    // STATE 2 — TRACKED APPLICATION
     else if (mode === "applied") {
       const dateStr = formatDisplayDate(application?.appliedAt);
+      const currentStatus = application?.status || "applied";
+      const statusLabel = getApplicationStatusLabel(currentStatus);
+
+      let statusInfoHtml = "";
+      if (currentStatus === "applied") {
+        statusInfoHtml = `
+          <div class="status-info text-applied">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span class="status-text">${statusLabel}</span>
+            <span class="text-date">${dateStr}</span>
+          </div>
+        `;
+      } else if (currentStatus === "interview") {
+        statusInfoHtml = `
+          <div class="status-info text-interview">
+            <span class="status-bullet" style="color: #d97706; font-size: 11px; line-height: 1; margin-right: 2px;">●</span>
+            <span class="status-text">${statusLabel}</span>
+            <span class="text-date">${dateStr}</span>
+          </div>
+        `;
+      } else if (currentStatus === "rejected") {
+        statusInfoHtml = `
+          <div class="status-info text-rejected">
+            <span class="status-text">${statusLabel}</span>
+            <span class="text-date">${dateStr}</span>
+          </div>
+        `;
+      } else if (currentStatus === "offer") {
+        statusInfoHtml = `
+          <div class="status-info text-offer">
+            <span class="status-text">${statusLabel}</span>
+            <span class="text-date">${dateStr}</span>
+          </div>
+        `;
+      } else {
+        statusInfoHtml = `
+          <div class="status-info text-applied">
+            <span class="status-text">${statusLabel}</span>
+            <span class="text-date">${dateStr}</span>
+          </div>
+        `;
+      }
+
       contentHtml = `
         <div class="header">
           <div class="brand">
@@ -349,16 +419,10 @@ export class LinkedInWidget {
             </svg>
             <span>AppliedYet</span>
           </div>
-          <span class="pill pill-applied">Tracked</span>
+          <span class="pill pill-${currentStatus}">Tracked</span>
         </div>
         <div class="status-line">
-          <div class="status-info text-applied">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12"/>
-            </svg>
-            <span class="status-text">Applied</span>
-            <span class="text-date">${dateStr}</span>
-          </div>
+          ${statusInfoHtml}
           ${
             !confirmingUndo
               ? `<button id="btn-undo" class="btn btn-outline" ${isMutating ? "disabled" : ""}>

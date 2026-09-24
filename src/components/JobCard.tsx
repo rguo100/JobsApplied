@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Timestamp } from "firebase/firestore";
 import { isPopupApplicationTracked } from "./popupApplicationState";
+import { getApplicationStatusLabel } from "../utils/applicationStatus";
 
 interface JobCardProps {
   job: Job | null;
@@ -99,7 +100,67 @@ export const JobCard: React.FC<JobCardProps> = ({
     );
   }
 
-  const isApplied = isPopupApplicationTracked(application);
+  const isTracked = isPopupApplicationTracked(application);
+  const currentStatus = application?.status || "applied";
+  const statusLabel = getApplicationStatusLabel(currentStatus);
+
+  const getStatusContainerClasses = () => {
+    if (applicationLoading) return "bg-slate-50 border-slate-200";
+    if (!isTracked) return "bg-slate-50 border-slate-200/80";
+    switch (currentStatus) {
+      case "interview":
+        return "bg-amber-50/90 border-amber-200";
+      case "rejected":
+        return "bg-rose-50/90 border-rose-200";
+      case "offer":
+        return "bg-emerald-50/90 border-emerald-200";
+      case "applied":
+      default:
+        return "bg-emerald-50/90 border-emerald-200";
+    }
+  };
+
+  const getStatusTextClasses = () => {
+    switch (currentStatus) {
+      case "interview":
+        return "text-amber-800";
+      case "rejected":
+        return "text-rose-800";
+      case "offer":
+        return "text-emerald-800";
+      case "applied":
+      default:
+        return "text-emerald-800";
+    }
+  };
+
+  const getStatusDateClasses = () => {
+    switch (currentStatus) {
+      case "interview":
+        return "text-amber-700";
+      case "rejected":
+        return "text-rose-700";
+      case "offer":
+        return "text-emerald-700";
+      case "applied":
+      default:
+        return "text-emerald-700";
+    }
+  };
+
+  const getStatusBadgeClasses = () => {
+    switch (currentStatus) {
+      case "interview":
+        return "bg-amber-100/80 text-amber-800 border-amber-200";
+      case "rejected":
+        return "bg-rose-100/80 text-rose-800 border-rose-200";
+      case "offer":
+        return "bg-emerald-100/80 text-emerald-800 border-emerald-200";
+      case "applied":
+      default:
+        return "bg-emerald-100/80 text-emerald-800 border-emerald-200";
+    }
+  };
 
   return (
     <div className="space-y-3.5">
@@ -166,13 +227,7 @@ export const JobCard: React.FC<JobCardProps> = ({
 
       {/* Status Section */}
       <div
-        className={`rounded-xl p-3.5 border transition-all ${
-          applicationLoading
-            ? "bg-slate-50 border-slate-200"
-            : isApplied
-            ? "bg-emerald-50/90 border-emerald-200"
-            : "bg-slate-50 border-slate-200/80"
-        }`}
+        className={`rounded-xl p-3.5 border transition-all ${getStatusContainerClasses()}`}
       >
         <div className="flex items-center justify-between">
           <div>
@@ -184,14 +239,19 @@ export const JobCard: React.FC<JobCardProps> = ({
                 <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />
                 <span>Checking status...</span>
               </div>
-            ) : isApplied ? (
+            ) : isTracked ? (
               <div>
-                <div className="flex items-center gap-1.5 text-sm font-bold text-emerald-800 mt-0.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Applied</span>
+                <div className={`flex items-center gap-1.5 text-sm font-bold ${getStatusTextClasses()} mt-0.5`}>
+                  {currentStatus === "applied" && (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  )}
+                  {currentStatus === "interview" && (
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0 inline-block" />
+                  )}
+                  <span>{statusLabel}</span>
                 </div>
-                <div className="text-xs text-emerald-700 font-medium mt-0.5">
-                  {formatApplicationDate(application.appliedAt)}
+                <div className={`text-xs ${getStatusDateClasses()} font-medium mt-0.5`}>
+                  {formatApplicationDate(application?.appliedAt)}
                 </div>
               </div>
             ) : (
@@ -202,8 +262,8 @@ export const JobCard: React.FC<JobCardProps> = ({
           </div>
 
           <div>
-            {isApplied ? (
-              <span className="px-2 py-0.5 bg-emerald-100/80 text-emerald-800 text-[11px] font-semibold rounded-full border border-emerald-200">
+            {isTracked ? (
+              <span className={`px-2 py-0.5 ${getStatusBadgeClasses()} text-[11px] font-semibold rounded-full border`}>
                 Tracked
               </span>
             ) : (
@@ -217,7 +277,7 @@ export const JobCard: React.FC<JobCardProps> = ({
 
       {/* Actions Section */}
       <div className="pt-1">
-        {isApplied ? (
+        {isTracked ? (
           /* Applied State: Shows Undo Button with inline confirmation */
           confirmingUndo ? (
             <div className="bg-rose-50/80 border border-rose-200 rounded-xl p-3 space-y-2.5">

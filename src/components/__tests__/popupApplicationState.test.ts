@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import type { Application, ApplicationStatus } from "../../types/application";
 import { isPopupApplicationTracked } from "../popupApplicationState";
 import { createApplicationStatusUpdate } from "../../services/applicationStatusUpdate";
+import { getApplicationStatusLabel } from "../../utils/applicationStatus";
 
 const originalAppliedAt = { marker: "original-applied-at" } as unknown as Application["appliedAt"];
 const originalCreatedAt = { marker: "original-created-at" } as unknown as Application["createdAt"];
@@ -54,5 +55,12 @@ for (const status of ["interview", "offer", "rejected", "applied"] as const) {
 }
 assert.equal(roundTrip.appliedAt, originalAppliedAt, "status round trip must preserve appliedAt");
 assert.equal(roundTrip.createdAt, originalCreatedAt, "status round trip must preserve createdAt");
+
+// Cross-surface status label invariants
+assert.equal(getApplicationStatusLabel("applied"), "Applied");
+assert.equal(getApplicationStatusLabel("interview"), "Interview");
+assert.equal(getApplicationStatusLabel("rejected"), "Rejected");
+assert.equal(getApplicationStatusLabel("offer"), "Offer");
+assert.equal(getApplicationStatusLabel("saved"), "Saved");
 
 console.log("Popup application tracking tests passed.");

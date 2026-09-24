@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist dist-web server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx src/types/__tests__/applicationIdentity.test.ts && tsx src/content/__tests__/linkedinJobExtractor.test.ts && tsx src/content/widget/__tests__/widgetLogic.test.ts && tsx src/content/widget/__tests__/applicationTrackingState.test.ts && tsx src/components/__tests__/popupApplicationState.test.ts && tsx src/content/__tests__/day41Concurrency.test.ts && tsx src/dashboard/__tests__/dashboardLogic.test.ts && tsx src/dashboard/__tests__/dashboardLifecycle.test.ts && tsx src/dashboard/__tests__/dashboardUsability.test.ts && tsx src/services/__tests__/applicationSavePayload.test.ts && tsx src/content/widget/__tests__/metadataRefresh.test.ts && tsx src/context/__tests__/authRecovery.test.ts"
+    "test": "tsx src/types/__tests__/applicationIdentity.test.ts && tsx src/content/__tests__/linkedinJobExtractor.test.ts && tsx src/content/widget/__tests__/widgetLogic.test.ts && tsx src/content/widget/__tests__/applicationTrackingState.test.ts && tsx src/components/__tests__/popupApplicationState.test.ts && tsx src/content/__tests__/day41Concurrency.test.ts && tsx src/dashboard/__tests__/dashboardLogic.test.ts && tsx src/dashboard/__tests__/dashboardLifecycle.test.ts && tsx src/dashboard/__tests__/dashboardUsability.test.ts && tsx src/services/__tests__/applicationSavePayload.test.ts && tsx src/content/widget/__tests__/metadataRefresh.test.ts && tsx src/context/__tests__/authRecovery.test.ts && tsx src/utils/__tests__/crossSurfaceConsistency.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

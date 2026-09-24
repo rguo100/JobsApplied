@@ -403,6 +403,73 @@ const tests: TestCase[] = [
       );
     },
   },
+  {
+    name: "Scenario 15: Cross-surface consistency - Interview status renders '● Interview'",
+    run: () => {
+      const widget = new LinkedInWidget({
+        onMarkApplied: async () => {},
+        onUndo: async () => {},
+      });
+      widget.setState({
+        mode: "applied",
+        job: mockJobA,
+        application: {
+          ...mockApplicationA,
+          status: "interview",
+        },
+      });
+      const shadow = (widget.getRootElement() as any).shadowRoot as MockShadowRoot;
+      assert(shadow.innerHTML.includes("Interview"), "Must display 'Interview'");
+      assert(shadow.innerHTML.includes("●"), "Must render bullet indicator for Interview");
+      assert(!shadow.innerHTML.includes(">Applied<"), "Must NOT display 'Applied'");
+      assert(shadow.innerHTML.includes("Tracked"), "Pill must remain 'Tracked'");
+      assert(shadow.innerHTML.includes("id=\"btn-undo\""), "Undo button must be available");
+    },
+  },
+  {
+    name: "Scenario 16: Cross-surface consistency - Rejected status renders 'Rejected'",
+    run: () => {
+      const widget = new LinkedInWidget({
+        onMarkApplied: async () => {},
+        onUndo: async () => {},
+      });
+      widget.setState({
+        mode: "applied",
+        job: mockJobA,
+        application: {
+          ...mockApplicationA,
+          status: "rejected",
+        },
+      });
+      const shadow = (widget.getRootElement() as any).shadowRoot as MockShadowRoot;
+      assert(shadow.innerHTML.includes("Rejected"), "Must display 'Rejected'");
+      assert(!shadow.innerHTML.includes(">Applied<"), "Must NOT display 'Applied'");
+      assert(shadow.innerHTML.includes("Tracked"), "Pill must remain 'Tracked'");
+      assert(shadow.innerHTML.includes("id=\"btn-undo\""), "Undo button must be available");
+    },
+  },
+  {
+    name: "Scenario 17: Cross-surface consistency - Offer status renders 'Offer'",
+    run: () => {
+      const widget = new LinkedInWidget({
+        onMarkApplied: async () => {},
+        onUndo: async () => {},
+      });
+      widget.setState({
+        mode: "applied",
+        job: mockJobA,
+        application: {
+          ...mockApplicationA,
+          status: "offer",
+        },
+      });
+      const shadow = (widget.getRootElement() as any).shadowRoot as MockShadowRoot;
+      assert(shadow.innerHTML.includes("Offer"), "Must display 'Offer'");
+      assert(!shadow.innerHTML.includes(">Applied<"), "Must NOT display 'Applied'");
+      assert(shadow.innerHTML.includes("Tracked"), "Pill must remain 'Tracked'");
+      assert(shadow.innerHTML.includes("id=\"btn-undo\""), "Undo button must be available");
+    },
+  },
 ];
 
 console.log("Running LinkedIn Widget unit tests...");
