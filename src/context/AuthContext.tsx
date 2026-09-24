@@ -7,6 +7,12 @@ import {
   onAuthStateChanged,
 } from "firebase/auth/web-extension";
 import { auth, isFirebaseConfigured } from "../firebase/config";
+import {
+  isInvalidCredentialError,
+  evictCachedAuthToken,
+  performSilentSyncWithRecovery,
+  performInteractiveAuthWithRecovery,
+} from "../utils/authRecovery";
 
 interface AuthContextType {
   user: User | null;
@@ -93,6 +99,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const details = describeError(err);
       recordAuthDiagnostic("firebase_sign_in_failed", { source, ...details });
       console.error("[AppliedYet Auth] Firebase signInWithCredential failed", details, err);
+
+      if (isInvalidCredentialError(err)) {
+        recordAuthDiagnostic("evicting_invalid_cached_token", { source, errorCode: details.code });
+        await evictCachedAuthToken(accessToken);
+      }
+
       setError(
         `${details.code ? `${details.code}: ` : ""}${details.message || "Failed to sign in with Google credential."}`
       );
@@ -169,14 +181,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           // perform silent synchronization check against Chrome's token cache
           if (!initialSyncAttemptedRef.current && !isAuthenticatingRef.current) {
             initialSyncAttemptedRef.current = true;
-            const cachedToken = await checkChromeCachedToken();
+            const syncResult = await performSilentSyncWithRecovery({
+              getCachedToken: checkChromeCachedToken,
+              authenticateWithToken: (token) => authenticateWithToken(token, "silent_sync"),
+              evictToken: evictCachedAuthToken,
+              recordDiagnostic: (stage, details) => recordAuthDiagnostic(stage, details),
+            });
 
-            if (cachedToken) {
-              try {
-                await authenticateWithToken(cachedToken, "silent_sync");
-              } catch {
-                // authenticateWithToken already records and displays the exact Firebase error.
-              }
+            if (syncResult.recoveredFromInvalidToken) {
+              setError(null);
             }
           }
 
@@ -220,38 +233,46 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       // Launch interactive Chrome Account Picker
-      recordAuthDiagnostic("chrome_interactive_token_requested", {
-        extensionId: chrome.runtime?.id,
-      });
-      const accessToken = await new Promise<string>((resolve, reject) => {
-        chrome.identity.getAuthToken({ interactive: true }, (token) => {
-          if (chrome.runtime?.lastError) {
-            const lastMsg = chrome.runtime.lastError.message || "OAuth error";
-            recordAuthDiagnostic("chrome_interactive_token_failed", { message: lastMsg });
-            if (
-              lastMsg.toLowerCase().includes("canceled") ||
-              lastMsg.toLowerCase().includes("cancelled") ||
-              lastMsg.toLowerCase().includes("did not approve")
-            ) {
-              return reject(new Error("Sign-in was cancelled by user."));
+      const requestInteractiveToken = (): Promise<string> => {
+        return new Promise<string>((resolve, reject) => {
+          recordAuthDiagnostic("chrome_interactive_token_requested", {
+            extensionId: chrome.runtime?.id,
+          });
+
+          chrome.identity.getAuthToken({ interactive: true }, (token) => {
+            if (chrome.runtime?.lastError) {
+              const lastMsg = chrome.runtime.lastError.message || "OAuth error";
+              recordAuthDiagnostic("chrome_interactive_token_failed", { message: lastMsg });
+              if (
+                lastMsg.toLowerCase().includes("canceled") ||
+                lastMsg.toLowerCase().includes("cancelled") ||
+                lastMsg.toLowerCase().includes("did not approve")
+              ) {
+                return reject(new Error("Sign-in was cancelled by user."));
+              }
+              return reject(new Error(lastMsg));
             }
-            return reject(new Error(lastMsg));
-          }
 
-          if (!token) {
-            recordAuthDiagnostic("chrome_interactive_token_failed", {
-              message: "No access token returned from Chrome Identity",
-            });
-            return reject(new Error("No access token returned from Chrome Identity."));
-          }
+            if (!token) {
+              recordAuthDiagnostic("chrome_interactive_token_failed", {
+                message: "No access token returned from Chrome Identity",
+              });
+              return reject(new Error("No access token returned from Chrome Identity."));
+            }
 
-          recordAuthDiagnostic("chrome_interactive_token_received");
-          resolve(token);
+            recordAuthDiagnostic("chrome_interactive_token_received");
+            resolve(token);
+          });
         });
-      });
+      };
 
-      // If the popup survived the interactive prompt, complete sign-in immediately
-      await authenticateWithToken(accessToken, "interactive");
+      // Perform interactive sign-in with recovery (retrying once with a fresh token if invalid-credential)
+      await performInteractiveAuthWithRecovery({
+        requestInteractiveToken,
+        authenticateWithToken: (token) => authenticateWithToken(token, "interactive"),
+        evictToken: evictCachedAuthToken,
+        recordDiagnostic: (stage, details) => recordAuthDiagnostic(stage, details),
+      });
     } catch (err: unknown) {
       const authError = err as { code?: string; message?: string };
       console.error("[AppliedYet Auth] Google sign-in failed", describeError(err), err);
@@ -276,18 +297,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setLoading(true);
 
       // Invalidate the token in Chrome's identity cache before signing out of Firebase
-      if (typeof chrome !== "undefined" && chrome.identity && chrome.identity.getAuthToken) {
+      if (typeof chrome !== "undefined" && chrome.identity?.getAuthToken) {
         await new Promise<void>((resolve) => {
-          chrome.identity.getAuthToken({ interactive: false }, (token) => {
+          chrome.identity.getAuthToken({ interactive: false }, async (token) => {
             if (!chrome.runtime?.lastError && token) {
-              chrome.identity.removeCachedAuthToken({ token }, () => {
-                resolve();
-              });
-            } else {
-              resolve();
+              await evictCachedAuthToken(token);
             }
+            resolve();
           });
         });
+      } else {
+        recordAuthDiagnostic("chrome_identity_unavailable_during_sign_out");
       }
 
       await signOut(auth);
@@ -295,6 +315,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (err: unknown) {
       const authError = err as { message?: string };
       setError(authError.message || "Failed to sign out.");
+      recordAuthDiagnostic("firebase_sign_out_failed", describeError(err));
     } finally {
       setLoading(false);
     }

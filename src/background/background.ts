@@ -1,5 +1,6 @@
 import { auth, isFirebaseConfigured } from "../firebase/config";
 import { onAuthStateChanged, GoogleAuthProvider, signInWithCredential } from "firebase/auth/web-extension";
+import { isInvalidCredentialError, evictCachedAuthToken } from "../utils/authRecovery";
 import {
   subscribeToApplication,
   markJobAsApplied,
@@ -54,9 +55,21 @@ async function attemptSilentSync(): Promise<boolean> {
     });
 
     if (token) {
-      const credential = GoogleAuthProvider.credential(null, token);
-      await signInWithCredential(auth, credential);
-      return true;
+      try {
+        const credential = GoogleAuthProvider.credential(null, token);
+        await signInWithCredential(auth, credential);
+        return true;
+      } catch (signErr) {
+        if (isInvalidCredentialError(signErr)) {
+          console.warn(
+            "[AppliedYet Background] Silent auth rejected invalid credential, evicting cached token"
+          );
+          await evictCachedAuthToken(token);
+        } else {
+          console.warn("[AppliedYet Background] Silent auth sync error:", signErr);
+        }
+        return false;
+      }
     }
   } catch (err) {
     console.warn("[AppliedYet Background] Silent auth sync error:", err);
