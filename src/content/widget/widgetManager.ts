@@ -10,6 +10,7 @@ import {
 } from "./jobMetadata";
 import { Application } from "../../types/application";
 import { LinkedInWidget } from "./LinkedInWidget";
+import { deriveApplicationTrackingState } from "./applicationTrackingState";
 import {
   getActiveDetailPane,
   isBroadMainDetailPane,
@@ -117,22 +118,12 @@ export class WidgetManager {
     }
 
     if (msg.type === "APPLICATION_DATA") {
-      const app = msg.application;
-      if (app && app.status === "applied") {
-        this.widget?.setState({
-          mode: "applied",
-          application: app,
-          errorMessage: null,
-          isMutating: false,
-        });
-      } else {
-        this.widget?.setState({
-          mode: "not_applied",
-          application: null,
-          errorMessage: null,
-          isMutating: false,
-        });
-      }
+      const trackingState = deriveApplicationTrackingState(msg.application);
+      this.widget?.setState({
+        ...trackingState,
+        errorMessage: null,
+        isMutating: false,
+      });
       return;
     }
 

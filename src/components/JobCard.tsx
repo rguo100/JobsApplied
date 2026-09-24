@@ -13,6 +13,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Timestamp } from "firebase/firestore";
+import { isPopupApplicationTracked } from "./popupApplicationState";
 
 interface JobCardProps {
   job: Job | null;
@@ -98,7 +99,7 @@ export const JobCard: React.FC<JobCardProps> = ({
     );
   }
 
-  const isApplied = application?.status === "applied";
+  const isApplied = isPopupApplicationTracked(application);
 
   return (
     <div className="space-y-3.5">

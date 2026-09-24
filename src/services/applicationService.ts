@@ -13,6 +13,8 @@ import {
 import { db, isFirebaseConfigured } from "../firebase/config";
 import { Application, ApplicationStatus, getApplicationDocId } from "../types/application";
 import type { Job } from "../types/job";
+import { createApplicationStatusUpdate } from "./applicationStatusUpdate";
+import { createApplicationSavePayload } from "./applicationSavePayload";
 
 function isFallbackCompany(company?: string | null): boolean {
   if (!company) return true;
@@ -141,21 +143,11 @@ export async function saveApplication(
       ? (existingSnap.data() as Application)
       : null;
 
-    const payload: WithFieldValue<Application> = {
-      source: application.source,
-      externalJobId: application.externalJobId,
-      company: application.company,
-      title: application.title,
-      location: application.location,
-      url: application.url,
-      status: application.status,
-      appliedAt:
-        application.status === "applied"
-          ? application.appliedAt || existingApplication?.appliedAt || serverTimestamp()
-          : null,
-      createdAt: existingApplication?.createdAt || serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
+    const payload = createApplicationSavePayload(
+      application,
+      existingApplication,
+      serverTimestamp
+    );
 
     await setDoc(docRef, payload, { merge: true });
   } catch (error) {
@@ -229,14 +221,10 @@ export async function updateApplicationStatus(
 
   try {
     const docRef = getApplicationDocRef(uid, source, externalJobId);
-    const updates: WithFieldValue<Partial<Application>> = {
+    const updates: WithFieldValue<Partial<Application>> = createApplicationStatusUpdate(
       status,
-      updatedAt: serverTimestamp(),
-    };
-
-    if (status === "applied") {
-      updates.appliedAt = serverTimestamp();
-    }
+      serverTimestamp()
+    );
 
     await updateDoc(docRef, updates as Record<string, unknown>);
   } catch (error) {

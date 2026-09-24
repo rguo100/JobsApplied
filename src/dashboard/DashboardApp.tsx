@@ -12,6 +12,14 @@ import {
   deleteApplication,
 } from "../services/applicationService";
 import { Briefcase, Loader2, AlertCircle } from "lucide-react";
+import {
+  createApplicationSubscriptionSession,
+  DashboardDataState,
+  deletePendingApplicationForUid,
+  getDashboardDataForUid,
+  getPendingDeleteForUid,
+  PendingDelete,
+} from "./dashboardLifecycle";
 
 export const DashboardApp: React.FC = () => {
   const {
@@ -23,50 +31,76 @@ export const DashboardApp: React.FC = () => {
     isConfigured,
   } = useWebAuth();
 
-  const [applications, setApplications] = useState<Application[]>([]);
-  const [dataLoading, setDataLoading] = useState<boolean>(true);
-  const [syncError, setSyncError] = useState<string | null>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardDataState>({
+    ownerUid: null,
+    applications: [],
+    loading: false,
+    error: null,
+  });
   const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
-  const [appPendingDelete, setAppPendingDelete] = useState<Application | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [retryCounter, setRetryCounter] = useState<number>(0);
+  const currentUid = user?.uid ?? null;
+  const visibleDashboardData = getDashboardDataForUid(dashboardData, currentUid);
+  const applications = visibleDashboardData.applications;
+  const dataLoading = visibleDashboardData.loading;
+  const syncError = visibleDashboardData.error;
+  const visiblePendingDelete = getPendingDeleteForUid(pendingDelete, currentUid);
 
   const handleRetry = useCallback(() => {
-    setSyncError(null);
-    setDataLoading(true);
+    setDashboardData((current) => ({
+      ...getDashboardDataForUid(current, currentUid),
+      loading: currentUid !== null,
+      error: null,
+    }));
     setRetryCounter((c) => c + 1);
-  }, []);
+  }, [currentUid]);
+
+  useEffect(() => {
+    setPendingDelete(null);
+  }, [currentUid]);
 
   // Real-time Firestore subscription to users/{uid}/applications
   useEffect(() => {
     if (!user) {
-      setApplications([]);
-      setDataLoading(false);
-      setSyncError(null);
+      setDashboardData({ ownerUid: null, applications: [], loading: false, error: null });
       return;
     }
 
-    setDataLoading(true);
-    setSyncError(null);
+    const subscribedUid = user.uid;
+    setDashboardData({
+      ownerUid: subscribedUid,
+      applications: [],
+      loading: true,
+      error: null,
+    });
 
-    const unsubscribe = subscribeToUserApplications(
-      user.uid,
+    const session = createApplicationSubscriptionSession(
+      subscribedUid,
+      subscribeToUserApplications,
       (fetchedApps) => {
-        setApplications(fetchedApps);
-        setDataLoading(false);
-        setSyncError(null);
+        setDashboardData({
+          ownerUid: subscribedUid,
+          applications: fetchedApps,
+          loading: false,
+          error: null,
+        });
       },
       (err) => {
         // As required: "Do not display stale data as current after a subscription error."
-        setApplications([]);
-        setSyncError(err.message || "Failed to synchronize applications.");
-        setDataLoading(false);
+        setDashboardData({
+          ownerUid: subscribedUid,
+          applications: [],
+          loading: false,
+          error: err.message || "Failed to synchronize applications.",
+        });
       }
     );
 
     return () => {
-      unsubscribe();
+      session.dispose();
     };
-  }, [user, retryCounter]);
+  }, [currentUid, retryCounter]);
 
   const handleStatusChange = async (app: Application, newStatus: ApplicationStatus) => {
     if (!user) return;
@@ -78,11 +112,22 @@ export const DashboardApp: React.FC = () => {
     }
   };
 
-  const handleDeleteConfirm = async (app: Application) => {
-    if (!user) return;
+  const handleDeleteConfirm = async (_app: Application) => {
+    if (!user) {
+      setPendingDelete(null);
+      return;
+    }
     try {
-      await deleteApplication(user.uid, app.source, app.externalJobId);
-      setAppPendingDelete(null);
+      const deleted = await deletePendingApplicationForUid(
+        pendingDelete,
+        currentUid,
+        deleteApplication
+      );
+      if (!deleted) {
+        setPendingDelete(null);
+        return;
+      }
+      setPendingDelete(null);
     } catch (err: any) {
       console.error("[AppliedYet Dashboard] Delete error:", err);
       alert(err instanceof Error ? err.message : "Failed to remove application.");
@@ -216,16 +261,16 @@ export const DashboardApp: React.FC = () => {
           <ApplicationTable
             applications={applications}
             onStatusChange={handleStatusChange}
-            onRequestDelete={(app) => setAppPendingDelete(app)}
+            onRequestDelete={(app) => setPendingDelete({ uid: user.uid, application: app })}
           />
         )}
       </main>
 
       {/* Confirmation Modal */}
       <DeleteConfirmModal
-        application={appPendingDelete}
-        isOpen={Boolean(appPendingDelete)}
-        onCancel={() => setAppPendingDelete(null)}
+        application={visiblePendingDelete?.application ?? null}
+        isOpen={Boolean(visiblePendingDelete)}
+        onCancel={() => setPendingDelete(null)}
         onConfirm={handleDeleteConfirm}
       />
     </div>
