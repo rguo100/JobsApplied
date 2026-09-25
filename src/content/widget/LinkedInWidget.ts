@@ -1,7 +1,7 @@
 import { Job } from "../../types/job";
 import { Application } from "../../types/application";
 import { Timestamp } from "firebase/firestore";
-import { getApplicationStatusLabel } from "../../utils/applicationStatus";
+import { getApplicationStatusLabel } from "./applicationStatusLabel";
 
 export interface WidgetCallbacks {
   onMarkApplied: () => Promise<void>;
