@@ -8,6 +8,19 @@ export interface AtsJobIdentity {
   documentId: string;
 }
 
+export interface AtsJob {
+  atsJobId: string;
+  provider: AtsProvider;
+  boardToken: string;
+  jobId: string;
+  canonicalUrl: string;
+  company: string;
+  title: string;
+  linkedInPostingIds: string[];
+  createdAt: import("firebase/firestore").Timestamp;
+  updatedAt: import("firebase/firestore").Timestamp;
+}
+
 const GREENHOUSE_BOARD_TOKEN_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 const GREENHOUSE_JOB_ID_PATTERN = /^\d+$/;
 

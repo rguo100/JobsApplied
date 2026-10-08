@@ -1,9 +1,184 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function validAtsProvider(value) {
+      return value == 'greenhouse';
+    }
+
+    function validAttemptStatus(value) {
+      return value in ['pending', 'confirmed', 'failed', 'uncertain'];
+    }
+
+    function validVerification(data) {
+      return data.verification is map
+        && data.verification.keys().hasOnly(['method', 'evidenceCode', 'verifiedAt'])
+        && data.verification.method in ['success_dom', 'success_url', 'manual']
+        && (data.verification.evidenceCode == null || data.verification.evidenceCode is string)
+        && data.verification.verifiedAt is timestamp;
+    }
+
+    function validAttemptOutcome(data) {
+      return validAttemptStatus(data.status)
+        && (
+          (data.status == 'confirmed'
+            && validVerification(data)
+            && data.userConfirmedAt is timestamp
+            && (data.submitClickedAt == null || data.submitClickedAt is timestamp)
+            && data.failureCode == null)
+          || (data.status != 'confirmed'
+            && data.verification == null
+            && (data.userConfirmedAt == null || data.userConfirmedAt is timestamp)
+            && (data.submitClickedAt == null || data.submitClickedAt is timestamp)
+            && (data.failureCode == null || data.failureCode is string))
+        );
+    }
+
+    function validCanonicalAtsId(value) {
+      return value is string
+        && value.matches('^greenhouse:[a-z0-9][a-z0-9_-]*:[0-9]+$');
+    }
+
+    function validUserConfirmationTransition() {
+      return request.resource.data.userConfirmedAt == resource.data.userConfirmedAt
+        || (resource.data.userConfirmedAt == null
+          && request.resource.data.userConfirmedAt is timestamp);
+    }
+
+    function validOptionalProfileFields(data) {
+      return (!('phone' in data) || data.phone is string)
+        && (!('city' in data) || data.city is string)
+        && (!('region' in data) || data.region is string)
+        && (!('country' in data) || data.country is string)
+        && (!('linkedinUrl' in data) || data.linkedinUrl is string)
+        && (!('githubUrl' in data) || data.githubUrl is string)
+        && (!('portfolioUrl' in data) || data.portfolioUrl is string);
+    }
+
+    function validAttemptTransition() {
+      return resource.data.status == request.resource.data.status
+        || resource.data.status == 'pending'
+        || (resource.data.status in ['failed', 'uncertain']
+          && request.resource.data.status == 'confirmed')
+        || (resource.data.status == 'uncertain'
+          && request.resource.data.status == 'failed');
+    }
+
     // Applications subcollection: users/{userId}/applications/{applicationId}
     match /users/{userId}/applications/{applicationId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isOwner(userId);
+    }
+
+    match /users/{userId}/atsJobs/{atsJobDocumentId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && request.resource.data.keys().hasOnly([
+          'atsJobId', 'provider', 'boardToken', 'jobId', 'canonicalUrl',
+          'company', 'title', 'linkedInPostingIds', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'atsJobId', 'provider', 'boardToken', 'jobId', 'canonicalUrl',
+          'company', 'title', 'linkedInPostingIds', 'createdAt', 'updatedAt'
+        ])
+        && validCanonicalAtsId(request.resource.data.atsJobId)
+        && validAtsProvider(request.resource.data.provider)
+        && request.resource.data.boardToken is string
+        && request.resource.data.jobId is string
+        && request.resource.data.canonicalUrl is string
+        && request.resource.data.company is string
+        && request.resource.data.title is string
+        && request.resource.data.linkedInPostingIds is list
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if isOwner(userId)
+        && request.resource.data.keys().hasOnly([
+          'atsJobId', 'provider', 'boardToken', 'jobId', 'canonicalUrl',
+          'company', 'title', 'linkedInPostingIds', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.atsJobId == resource.data.atsJobId
+        && request.resource.data.provider == resource.data.provider
+        && request.resource.data.boardToken == resource.data.boardToken
+        && request.resource.data.jobId == resource.data.jobId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.canonicalUrl is string
+        && request.resource.data.company is string
+        && request.resource.data.title is string
+        && request.resource.data.linkedInPostingIds is list
+        && request.resource.data.linkedInPostingIds.hasAll(resource.data.linkedInPostingIds)
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if false;
+    }
+
+    match /users/{userId}/submissionAttempts/{attemptId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && request.resource.data.keys().hasOnly([
+          'attemptId', 'atsJobId', 'linkedInPostingIds', 'status',
+          'userConfirmedAt', 'submitClickedAt', 'verification', 'failureCode',
+          'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'attemptId', 'atsJobId', 'linkedInPostingIds', 'status',
+          'userConfirmedAt', 'submitClickedAt', 'verification', 'failureCode',
+          'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.attemptId == attemptId
+        && validCanonicalAtsId(request.resource.data.atsJobId)
+        && request.resource.data.linkedInPostingIds is list
+        && request.resource.data.status == 'pending'
+        && validAttemptOutcome(request.resource.data)
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if isOwner(userId)
+        && request.resource.data.keys().hasOnly([
+          'attemptId', 'atsJobId', 'linkedInPostingIds', 'status',
+          'userConfirmedAt', 'submitClickedAt', 'verification', 'failureCode',
+          'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.attemptId == resource.data.attemptId
+        && request.resource.data.atsJobId == resource.data.atsJobId
+        && request.resource.data.linkedInPostingIds == resource.data.linkedInPostingIds
+        && validUserConfirmationTransition()
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt is timestamp
+        && validAttemptTransition()
+        && validAttemptOutcome(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /users/{userId}/private/{documentId} {
+      allow read: if isOwner(userId) && documentId == 'applicantProfile';
+      allow create: if isOwner(userId)
+        && documentId == 'applicantProfile'
+        && request.resource.data.keys().hasOnly([
+          'firstName', 'lastName', 'email', 'phone', 'city', 'region', 'country',
+          'linkedinUrl', 'githubUrl', 'portfolioUrl', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'firstName', 'lastName', 'email', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.firstName is string
+        && request.resource.data.lastName is string
+        && request.resource.data.email is string
+        && validOptionalProfileFields(request.resource.data)
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if isOwner(userId)
+        && documentId == 'applicantProfile'
+        && request.resource.data.keys().hasOnly([
+          'firstName', 'lastName', 'email', 'phone', 'city', 'region', 'country',
+          'linkedinUrl', 'githubUrl', 'portfolioUrl', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.firstName is string
+        && request.resource.data.lastName is string
+        && request.resource.data.email is string
+        && validOptionalProfileFields(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if isOwner(userId) && documentId == 'applicantProfile';
     }
 
     // Explicitly deny access to all other paths
