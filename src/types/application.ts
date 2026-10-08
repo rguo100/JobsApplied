@@ -1,4 +1,6 @@
 import { Timestamp } from "firebase/firestore";
+import type { AtsProvider } from "./ats";
+import type { SubmissionSummary } from "./submission";
 
 export type ApplicationStatus =
   | "applied"
@@ -20,6 +22,14 @@ export interface Application {
   appliedAt: Timestamp | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+
+  // Optional V1.1 linkage preserves compatibility with existing Firestore documents.
+  trackingVersion?: number;
+  atsJobId?: string;
+  atsProvider?: AtsProvider;
+  atsUrl?: string;
+  atsDiscoveredAt?: Timestamp;
+  submissionSummary?: SubmissionSummary;
 }
 
 /**
