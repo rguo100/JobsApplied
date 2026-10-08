@@ -118,6 +118,9 @@ const tests: TestCase[] = [
       });
       const root = widget.getRootElement();
       assert.equal(root.id, "appliedyet-job-widget-root");
+      assert.equal(root.style.height, "auto");
+      assert.equal(root.style.minHeight, "0");
+      assert.equal(root.style.maxHeight, "none");
     },
   },
   {

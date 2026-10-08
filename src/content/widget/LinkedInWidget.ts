@@ -66,6 +66,9 @@ export class LinkedInWidget {
     this.container.style.display = "block";
     this.container.style.width = "100%";
     this.container.style.maxWidth = "100%";
+    this.container.style.height = "auto";
+    this.container.style.minHeight = "0";
+    this.container.style.maxHeight = "none";
     this.container.style.boxSizing = "border-box";
     this.container.style.margin = "10px 0";
     this.shadow = this.container.attachShadow({ mode: "open" });
@@ -116,6 +119,9 @@ export class LinkedInWidget {
     const styles = `
       :host {
         display: block;
+        height: auto;
+        min-height: 0;
+        max-height: none;
         margin: 12px 0 16px 0;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         font-size: 13px;
@@ -133,6 +139,28 @@ export class LinkedInWidget {
         padding: 10px 14px;
         box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
         transition: all 0.15s ease-in-out;
+      }
+      :host([data-layout="split-pane"]) .card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 16px;
+        flex-wrap: wrap;
+      }
+      :host([data-layout="split-pane"]) .header {
+        flex: 0 0 auto;
+        margin-bottom: 0;
+      }
+      :host([data-layout="split-pane"]) .status-line {
+        flex: 1 1 220px;
+        min-width: 0;
+        margin-top: 0;
+      }
+      :host([data-layout="split-pane"]) .confirm-box,
+      :host([data-layout="split-pane"]) .error-alert {
+        flex: 1 0 100%;
+        margin-top: 0;
       }
       .header {
         display: flex;

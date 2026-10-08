@@ -387,11 +387,124 @@ export class WidgetManager {
    * Scoped strictly inside getActiveDetailPane to never touch search results or body.
    */
   private findMountAnchor(jobId?: string | null): MountAnchor | null {
+    return this.isSplitPaneLayout()
+      ? this.getSplitPaneInsertionAnchor(jobId)
+      : this.getStandaloneInsertionAnchor(jobId);
+  }
+
+  private getSplitPaneInsertionAnchor(jobId?: string | null): MountAnchor | null {
+    const detailPane = getActiveDetailPane(document);
+    if (!detailPane) {
+      return null;
+    }
+
+    const topCardSelectors = [
+      ".job-details-jobs-unified-top-card",
+      ".jobs-unified-top-card",
+      ".top-card-layout",
+      ".job-details-jobs-unified-top-card__container",
+    ];
+
+    for (const selector of topCardSelectors) {
+      const candidates = Array.from(detailPane.querySelectorAll(selector));
+      const header = candidates.find((candidate) =>
+        this.isTopJobHeader(candidate, jobId),
+      );
+      if (header?.parentNode && header.parentNode !== document.body) {
+        return {
+          targetNode: header.parentNode,
+          insertBefore: header.nextSibling,
+          selectorMatched: `split-pane-after-${selector}`,
+        };
+      }
+    }
+
+    // A class-independent fallback: climb from the exact active-job link and
+    // accept only an ancestor containing the title, metadata, and primary
+    // header actions. Result-list cards are explicitly excluded.
+    if (jobId) {
+      const activeLink = Array.from(
+        detailPane.querySelectorAll(`a[href*="/jobs/view/${jobId}/"]`),
+      ).find((link) => !link.closest(RESULT_CARD_SELECTOR));
+      let candidate = activeLink?.parentElement || null;
+      while (candidate && candidate !== detailPane) {
+        if (this.isTopJobHeader(candidate, jobId)) {
+          if (candidate.parentNode && candidate.parentNode !== document.body) {
+            return {
+              targetNode: candidate.parentNode,
+              insertBefore: candidate.nextSibling,
+              selectorMatched: "split-pane-after-active-job-header",
+            };
+          }
+          break;
+        }
+        candidate = candidate.parentElement;
+      }
+    }
+
+    // Safe fallback for layouts whose top header has no stable container
+    // selector. These are the same description anchors already used by the
+    // extractor and remain scoped to the active detail pane.
+    const bodySelectors = [
+      "#job-details",
+      ".jobs-description",
+      ".jobs-box__html-content",
+      ".jobs-description__content",
+      ".jobs-description-content",
+      "article.jobs-description__container",
+    ];
+    for (const selector of bodySelectors) {
+      const description = detailPane.querySelector(selector);
+      if (
+        description &&
+        description.parentNode &&
+        description.parentNode !== document.body
+      ) {
+        return {
+          targetNode: description.parentNode,
+          insertBefore: description,
+          selectorMatched: `split-pane-before-${selector}`,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private isTopJobHeader(candidate: Element, jobId?: string | null): boolean {
+    if (candidate.closest(RESULT_CARD_SELECTOR)) return false;
+
+    const title = jobId
+      ? candidate.querySelector(`a[href*="/jobs/view/${jobId}/"], h1, h2`)
+      : candidate.querySelector("h1, h2");
+    if (!title) return false;
+
+    const hasMetadata = Array.from(candidate.querySelectorAll("p")).some((paragraph) =>
+      JOB_METADATA_MARKER.test(paragraph.textContent || ""),
+    );
+    if (!hasMetadata) return false;
+
+    return Array.from(candidate.querySelectorAll("button, a")).some((action) =>
+      /\b(?:save|apply|more)\b/i.test(action.textContent || "") ||
+      /(?:apply|save)/i.test(action.className || ""),
+    );
+  }
+
+  private getStandaloneInsertionAnchor(jobId?: string | null): MountAnchor | null {
     const detailPane = getActiveDetailPane(document);
     if (!detailPane) {
       return null;
     }
     const isBroadMain = isBroadMainDetailPane(detailPane);
+    const BODY_SELECTORS = [
+      "#job-details",
+      ".jobs-description",
+      ".jobs-box__html-content",
+      ".jobs-description__content",
+      ".jobs-description-content",
+      "article.jobs-description__container",
+    ];
+
 
     // Priority 1: Top-card primary description / subtitle groupings inside the active detail pane
     const PRIMARY_DESC_SELECTORS = [
@@ -479,15 +592,6 @@ export class WidgetManager {
     }
 
     // Priority 4: Before Job Description Content Body
-    const BODY_SELECTORS = [
-      "#job-details",
-      ".jobs-description",
-      ".jobs-box__html-content",
-      ".jobs-description__content",
-      ".jobs-description-content",
-      "article.jobs-description__container",
-    ];
-
     for (const selector of BODY_SELECTORS) {
       const el = detailPane.querySelector(selector);
       if (el && el.parentNode && el.parentNode !== document.body) {
@@ -517,6 +621,17 @@ export class WidgetManager {
       insertBefore: null,
       selectorMatched: "detail-pane-append",
     };
+  }
+
+  private isSplitPaneLayout(): boolean {
+    if (typeof window === "undefined" || !window.location) {
+      return false;
+    }
+
+    return (
+      /\/jobs\/search-results(?:\/|$)/i.test(window.location.pathname) ||
+      new URLSearchParams(window.location.search).has("currentJobId")
+    );
   }
 
   private isVerifiedDetailHeaderLink(link: Element, broadMain: Element): boolean {
@@ -550,7 +665,15 @@ export class WidgetManager {
 
     if (!anchor) {
       console.warn("[AppliedYet] Job detected but no safe widget anchor found");
+      // Never remove a currently working root while LinkedIn is between DOM
+      // states. A later observer pass can move it once an anchor exists.
       return;
+    }
+
+    if (this.isSplitPaneLayout()) {
+      widgetRoot.setAttribute("data-layout", "split-pane");
+    } else {
+      widgetRoot.removeAttribute("data-layout");
     }
 
     // Duplicate Prevention Check:
