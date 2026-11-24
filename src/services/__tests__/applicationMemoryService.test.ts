@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import type { Timestamp } from "firebase/firestore";
 import type { ApplicationMemory, SavedApplicationAnswer } from "../../types/applicationMemory";
-import { createApplicationMemoryPayload, mergeApplicationMemoryAnswers } from "../applicationMemoryService";
+import { createApplicationMemoryPayload, mergeApplicationMemoryAnswers, setApplicationMemoryRepositoryTestContext } from "../applicationMemoryService";
 import {
   validateAndNormalizeAnswers,
+  validateAndNormalizeApplicationMemoryAnswerV2,
+  validateAndNormalizeApplicationMemoryV2Parent,
   validateAndNormalizeResumeReference,
   validateApplicationMemoryInput,
 } from "../../utils/applicationMemoryValidation";
@@ -49,12 +51,24 @@ const resume = validateAndNormalizeResumeReference({ fileName: " resume.pdf ", f
 assert.equal(resume.fileName, "resume.pdf");
 assert.equal(resume.storagePath, null);
 assert.equal(validateApplicationMemoryInput({ atsJobId, canonicalUrl }).atsJobId, atsJobId);
+const v2Parent = validateAndNormalizeApplicationMemoryV2Parent({
+  atsJobId,
+  atsJobDocumentId: encodeURIComponent(atsJobId),
+  canonicalUrl,
+  resume: null,
+});
+assert.equal(v2Parent.atsJobDocumentId, encodeURIComponent(atsJobId));
+assert.equal(validateAndNormalizeApplicationMemoryAnswerV2({ atsJobId, ...first }).fieldKey, first.fieldKey);
+assert.throws(() => validateAndNormalizeApplicationMemoryV2Parent({ atsJobId, atsJobDocumentId: "wrong", canonicalUrl }));
 assert.throws(() => validateApplicationMemoryInput({ atsJobId, canonicalUrl: "https://example.com/job" }));
 assert.throws(() => validateAndNormalizeAnswers([{ ...first, fieldKey: "date_of_birth", question: "Date of birth" }]));
+assert.throws(() => validateAndNormalizeApplicationMemoryAnswerV2({ atsJobId, ...first, fieldKey: "date_of_birth" }));
 assert.throws(() => validateAndNormalizeAnswers([{ ...first, fieldType: "text", value: true }]));
 assert.throws(() => validateAndNormalizeAnswers(Array.from({ length: 11 }, (_, index) => ({ ...first, fieldKey: `answer_${index}` }))));
 assert.throws(() => validateAndNormalizeAnswers([{ ...first, value: "x".repeat(4001) }]));
 assert.throws(() => createApplicationMemoryPayload({ atsJobId: "greenhouse:other:1", canonicalUrl: "https://job-boards.greenhouse.io/other/jobs/1" }, existing, timestamp));
 const otherJob = createApplicationMemoryPayload({ atsJobId: "greenhouse:affirm:7985862004", canonicalUrl: "https://job-boards.greenhouse.io/affirm/jobs/7985862004" }, null, timestamp);
 assert.notEqual(otherJob.atsJobId, created.atsJobId);
+assert.throws(() => setApplicationMemoryRepositoryTestContext({ firestore: {} as never, uid: "test", firestoreEmulatorHost: "127.0.0.1:8088" }));
+setApplicationMemoryRepositoryTestContext(null);
 console.log("Application Memory repository tests passed.");

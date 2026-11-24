@@ -1,15 +1,17 @@
 import {
   APPLICATION_MEMORY_SCHEMA_VERSION,
   ApplicationMemoryChoice,
+  ApplicationMemoryAnswerV2Input,
   ApplicationMemoryDraftInput,
   ApplicationMemoryFieldType,
+  ApplicationMemoryV2ParentInput,
   MAX_APPLICATION_MEMORY_ANSWERS,
   MAX_APPLICATION_MEMORY_CHOICE_OPTIONS,
   MAX_APPLICATION_MEMORY_LIST_VALUES,
   ResumeReference,
   SavedApplicationAnswer,
 } from "../types/applicationMemory";
-import { parseAtsJobId } from "../types/ats";
+import { getAtsJobDocumentId, parseAtsJobId } from "../types/ats";
 
 const FIELD_TYPES = new Set<ApplicationMemoryFieldType>([
   "text", "textarea", "email", "tel", "select", "radio",
@@ -32,6 +34,12 @@ function requireTrimmedString(value: unknown, name: string, maxLength: number): 
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > maxLength) throw new Error(`${name} is invalid or too long.`);
   return trimmed;
+}
+
+export function validateAndNormalizeApplicationMemoryFieldKey(value: unknown): string {
+  const fieldKey = requireTrimmedString(value, "Field key", MAX_FIELD_KEY_LENGTH).toLowerCase();
+  if (!FIELD_KEY_PATTERN.test(fieldKey)) throw new Error("Field key must be a stable normalized identifier.");
+  return fieldKey;
 }
 
 function validateChoice(choice: ApplicationMemoryChoice): ApplicationMemoryChoice {
@@ -61,7 +69,7 @@ function normalizeValue(answer: SavedApplicationAnswer): string | boolean | stri
 
 export function validateAndNormalizeSavedAnswer(answer: SavedApplicationAnswer): SavedApplicationAnswer {
   if (!answer || typeof answer !== "object" || Array.isArray(answer)) throw new Error("Saved answer is invalid.");
-  const fieldKey = requireTrimmedString(answer.fieldKey, "Field key", MAX_FIELD_KEY_LENGTH).toLowerCase();
+  const fieldKey = validateAndNormalizeApplicationMemoryFieldKey(answer.fieldKey);
   const question = requireTrimmedString(answer.question, "Question", MAX_QUESTION_LENGTH);
   if (!FIELD_KEY_PATTERN.test(fieldKey)) throw new Error("Field key must be a stable normalized identifier.");
   if (!FIELD_TYPES.has(answer.fieldType)) throw new Error("Unsupported application field type.");
@@ -80,6 +88,43 @@ export function validateAndNormalizeSavedAnswer(answer: SavedApplicationAnswer):
     normalized.choiceMetadata = { options: answer.choiceMetadata.options.map(validateChoice) };
   }
   return normalized;
+}
+
+/** Validates a standalone V2 answer before it is written to its own document. */
+export function validateAndNormalizeApplicationMemoryAnswerV2(
+  answer: ApplicationMemoryAnswerV2Input,
+): ApplicationMemoryAnswerV2Input {
+  const normalized = validateAndNormalizeSavedAnswer(answer);
+  return { atsJobId: parseAtsJobId(answer.atsJobId).canonicalId, ...normalized };
+}
+
+/** V2 parent validation intentionally excludes answers; they live in a subcollection. */
+export function validateAndNormalizeApplicationMemoryV2Parent(
+  input: ApplicationMemoryV2ParentInput,
+): ApplicationMemoryV2ParentInput & { boardToken: string; jobId: string } {
+  if (!input || typeof input !== "object") throw new Error("Application memory input is required.");
+  const identity = parseAtsJobId(input.atsJobId);
+  if (input.atsJobDocumentId !== getAtsJobDocumentId(identity.canonicalId)) {
+    throw new Error("Application memory document identity is invalid.");
+  }
+  const canonicalUrl = requireTrimmedString(input.canonicalUrl, "Canonical URL", MAX_CANONICAL_URL_LENGTH);
+  let url: URL;
+  try { url = new URL(canonicalUrl); }
+  catch { throw new Error("Canonical URL is invalid."); }
+  const expectedPath = `/${identity.boardToken}/jobs/${identity.jobId}`;
+  if (url.protocol !== "https:" || url.hostname !== "job-boards.greenhouse.io" || url.pathname.replace(/\/$/, "") !== expectedPath) {
+    throw new Error("Canonical URL does not match the ATS job identity.");
+  }
+  return {
+    atsJobId: identity.canonicalId,
+    atsJobDocumentId: input.atsJobDocumentId,
+    boardToken: identity.boardToken,
+    jobId: identity.jobId,
+    canonicalUrl: `${url.origin}${expectedPath}`,
+    ...(input.resume === undefined
+      ? {}
+      : { resume: input.resume === null ? null : validateAndNormalizeResumeReference(input.resume) }),
+  };
 }
 
 export function validateAndNormalizeAnswers(answers: SavedApplicationAnswer[]): SavedApplicationAnswer[] {

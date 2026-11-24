@@ -5,7 +5,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc, updateDoc, Timestamp } from "firebase/firestore";
+import { deleteDoc, doc, getDoc, setDoc, updateDoc, writeBatch, Timestamp } from "firebase/firestore";
 
 const projectId = "appliedyet-rules-test";
 const rules = await readFile(new URL("../firestore.rules", import.meta.url), "utf8");
@@ -124,50 +124,103 @@ try {
     fieldType: "multiselect",
     value: ["platform", "infrastructure"],
   };
-  const memoryData = {
-    schemaVersion: 1,
+  const v2MemoryData = {
+    schemaVersion: 2,
     atsJobId,
+    atsJobDocumentId: atsDocumentId,
     provider: "greenhouse",
+    boardToken: "affirm",
+    jobId: "7985862003",
     canonicalUrl: "https://job-boards.greenhouse.io/affirm/jobs/7985862003",
     status: "draft",
-    answers: [firstAnswer],
     resume: null,
     createdAt: now,
     updatedAt: now,
   };
-  await assertSucceeds(setDoc(memoryRef, memoryData));
+  await assertSucceeds(setDoc(memoryRef, v2MemoryData));
   assert.equal((await getDoc(memoryRef)).data().status, "draft");
   await assertFails(getDoc(doc(anonymous, "users", "user-a", "applicationMemories", atsDocumentId)));
   await assertFails(getDoc(doc(userB, "users", "user-a", "applicationMemories", atsDocumentId)));
-  await assertFails(setDoc(doc(userB, "users", "user-a", "applicationMemories", atsDocumentId), memoryData));
+  await assertFails(setDoc(doc(userB, "users", "user-a", "applicationMemories", atsDocumentId), v2MemoryData));
+  await assertFails(setDoc(doc(userA, "users", "user-a", "applicationMemories", "greenhouse%3Aaffirm%3A7985862004"), {
+    ...v2MemoryData,
+    atsJobDocumentId: atsDocumentId,
+    atsJobId: "greenhouse:affirm:7985862004",
+    canonicalUrl: "https://job-boards.greenhouse.io/affirm/jobs/7985862004",
+  }));
   const originalCreatedAt = (await getDoc(memoryRef)).data().createdAt;
-  await assertSucceeds(updateDoc(memoryRef, { answers: [{ ...firstAnswer, value: "10+" }, secondAnswer], updatedAt: Timestamp.now() }));
-  await assertSucceeds(updateDoc(memoryRef, { answers: [secondAnswer], updatedAt: Timestamp.now() }));
   await assertSucceeds(updateDoc(memoryRef, {
     resume: { fileName: "resume.pdf", fileSize: 1234, mimeType: "application/pdf", storageStatus: "reference_only", storagePath: null },
     updatedAt: Timestamp.now(),
   }));
   assert.equal((await getDoc(memoryRef)).data().createdAt.toMillis(), originalCreatedAt.toMillis());
   await assertFails(updateDoc(memoryRef, { atsJobId: "greenhouse:affirm:1", updatedAt: Timestamp.now() }));
-  await assertFails(updateDoc(memoryRef, { answers: [{ ...firstAnswer, value: { bad: true } }], updatedAt: Timestamp.now() }));
-  await assertFails(updateDoc(memoryRef, { answers: [{ ...firstAnswer, fieldKey: "date_of_birth", question: "Date of birth" }], updatedAt: Timestamp.now() }));
-  await assertFails(updateDoc(memoryRef, { answers: [{ ...firstAnswer, value: "x".repeat(4001) }], updatedAt: Timestamp.now() }));
-  await assertSucceeds(updateDoc(memoryRef, {
-    answers: Array.from({ length: 10 }, (_, index) => ({ ...firstAnswer, fieldKey: `answer_${index}` })),
-    updatedAt: Timestamp.now(),
-  }));
-  await assertFails(updateDoc(memoryRef, { answers: Array.from({ length: 11 }, (_, index) => ({ ...firstAnswer, fieldKey: `answer_${index}` })), updatedAt: Timestamp.now() }));
   await assertFails(updateDoc(memoryRef, { resume: { fileName: "resume.pdf", storageStatus: "uploaded", storagePath: "files/resume.pdf" }, updatedAt: Timestamp.now() }));
 
-  const secondAtsJobId = "greenhouse:affirm:7985862004";
-  const secondMemoryRef = doc(userA, "users", "user-a", "applicationMemories", encodeURIComponent(secondAtsJobId));
-  await assertSucceeds(setDoc(secondMemoryRef, {
-    ...memoryData,
-    atsJobId: secondAtsJobId,
-    canonicalUrl: "https://job-boards.greenhouse.io/affirm/jobs/7985862004",
-    answers: [],
+  const answerRef = doc(userA, "users", "user-a", "applicationMemories", atsDocumentId, "answers", firstAnswer.fieldKey);
+  const v2Answer = { schemaVersion: 1, atsJobId, ...firstAnswer, revision: 1, createdAt: now, updatedAt: now };
+  await assertSucceeds(setDoc(answerRef, v2Answer));
+  await assertFails(getDoc(doc(anonymous, "users", "user-a", "applicationMemories", atsDocumentId, "answers", firstAnswer.fieldKey)));
+  await assertSucceeds(updateDoc(answerRef, { value: "10+", revision: 2, updatedAt: Timestamp.now() }));
+  await assertFails(updateDoc(answerRef, { atsJobId: "greenhouse:affirm:1", revision: 3, updatedAt: Timestamp.now() }));
+  await assertFails(updateDoc(answerRef, { revision: 4, updatedAt: Timestamp.now() }));
+  await assertFails(setDoc(doc(userA, "users", "user-a", "applicationMemories", atsDocumentId, "answers", "wrong_id"), { ...v2Answer, fieldKey: "right_id" }));
+  await assertFails(setDoc(doc(userA, "users", "user-a", "applicationMemories", atsDocumentId, "answers", "date_of_birth"), { ...v2Answer, fieldKey: "date_of_birth" }));
+  await assertFails(setDoc(doc(userA, "users", "user-a", "applicationMemories", atsDocumentId, "answers", "bad_value"), { ...v2Answer, fieldKey: "bad_value", value: { bad: true } }));
+  await assertFails(setDoc(doc(userA, "users", "user-a", "applicationMemories", atsDocumentId, "answers", "unknown_field"), { ...v2Answer, fieldKey: "unknown_field", unknown: true }));
+  await assertFails(setDoc(doc(userA, "users", "user-a", "applicationMemories", encodeURIComponent("greenhouse:affirm:7985862004"), "answers", "orphan"), { ...v2Answer, atsJobId: "greenhouse:affirm:7985862004", fieldKey: "orphan" }));
+  await assertFails(setDoc(doc(userB, "users", "user-a", "applicationMemories", atsDocumentId, "answers", "cross_user"), { ...v2Answer, fieldKey: "cross_user" }));
+  await assertFails(deleteDoc(memoryRef));
+  await assertSucceeds(deleteDoc(answerRef));
+
+  async function createMemoryWithAnswers(count) {
+    const jobId = `7985863${String(count).padStart(3, "0")}`;
+    const id = `greenhouse:affirm:${jobId}`;
+    const encoded = encodeURIComponent(id);
+    const parent = doc(userA, "users", "user-a", "applicationMemories", encoded);
+    await assertSucceeds(setDoc(parent, {
+      ...v2MemoryData,
+      atsJobId: id,
+      atsJobDocumentId: encoded,
+      boardToken: "affirm",
+      jobId,
+      canonicalUrl: `https://job-boards.greenhouse.io/affirm/jobs/${jobId}`,
+    }));
+    const batch = writeBatch(userA);
+    for (let index = 0; index < count; index++) {
+      const fieldKey = `question_${index}`;
+      batch.set(doc(userA, "users", "user-a", "applicationMemories", encoded, "answers", fieldKey), {
+        schemaVersion: 1, atsJobId: id, fieldKey, question: `Question ${index}`,
+        fieldType: "text", value: "answer", revision: 1, createdAt: now, updatedAt: now,
+      });
+    }
+    await assertSucceeds(batch.commit());
+    return { parent, encoded, id };
+  }
+
+  let fifty;
+  for (const count of [10, 20, 30, 50]) {
+    const created = await createMemoryWithAnswers(count);
+    if (count === 50) fifty = created;
+  }
+  const fiftyAnswerRef = doc(userA, "users", "user-a", "applicationMemories", fifty.encoded, "answers", "question_49");
+  await assertSucceeds(updateDoc(fiftyAnswerRef, { value: "updated", revision: 2, updatedAt: Timestamp.now() }));
+  const complexRef = doc(userA, "users", "user-a", "applicationMemories", fifty.encoded, "answers", "maximum_complexity");
+  await assertSucceeds(setDoc(complexRef, {
+    schemaVersion: 1, atsJobId: fifty.id, fieldKey: "maximum_complexity", question: "Maximum complexity", fieldType: "select",
+    value: "x".repeat(4000), choiceMetadata: { options: Array.from({ length: 10 }, (_, index) => ({ value: `v${index}`, label: `Option ${index}` })) },
+    revision: 1, createdAt: now, updatedAt: now,
   }));
-  assert.notEqual(memoryRef.path, secondMemoryRef.path);
+
+  const legacyId = encodeURIComponent("greenhouse:affirm:7985862999");
+  const legacyRef = doc(userA, "users", "user-a", "applicationMemories", legacyId);
+  await env.withSecurityRulesDisabled(async (context) => setDoc(doc(context.firestore(), "users", "user-a", "applicationMemories", legacyId), {
+    schemaVersion: 1, atsJobId: "greenhouse:affirm:7985862999", provider: "greenhouse",
+    canonicalUrl: "https://job-boards.greenhouse.io/affirm/jobs/7985862999", status: "draft", answers: [firstAnswer], resume: null, createdAt: now, updatedAt: now,
+  }));
+  await assertSucceeds(getDoc(legacyRef));
+  await assertFails(updateDoc(legacyRef, { updatedAt: Timestamp.now() }));
+  await assertFails(setDoc(legacyRef, { ...v2MemoryData, atsJobDocumentId: legacyId, atsJobId: "greenhouse:affirm:7985862999", canonicalUrl: "https://job-boards.greenhouse.io/affirm/jobs/7985862999" }));
 
   const sharedPostingA = doc(userA, "users", "user-a", "applications", "linkedin_4470021362");
   const sharedPostingB = doc(userA, "users", "user-a", "applications", "linkedin_4470029105");

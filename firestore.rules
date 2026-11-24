@@ -141,6 +141,65 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function validV2ApplicationMemory(data, atsJobDocumentId) {
+      return data.keys().hasOnly([
+          'schemaVersion', 'atsJobId', 'atsJobDocumentId', 'provider', 'canonicalUrl',
+          'boardToken', 'jobId', 'status', 'resume', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'schemaVersion', 'atsJobId', 'atsJobDocumentId', 'provider', 'canonicalUrl',
+          'boardToken', 'jobId', 'status', 'resume', 'createdAt', 'updatedAt'
+        ])
+        && data.schemaVersion == 2
+        && validCanonicalAtsId(data.atsJobId)
+        && data.atsJobDocumentId == atsJobDocumentId
+        && atsJobDocumentId.matches('^greenhouse%3A[a-z0-9][a-z0-9_-]*%3A[0-9]+$')
+        && data.provider == 'greenhouse'
+        && data.boardToken is string && data.boardToken.matches('^[a-z0-9][a-z0-9_-]*$')
+        && data.jobId is string && data.jobId.matches('^[0-9]+$')
+        && data.atsJobId == 'greenhouse:' + data.boardToken + ':' + data.jobId
+        && data.atsJobDocumentId == 'greenhouse%3A' + data.boardToken + '%3A' + data.jobId
+        && data.canonicalUrl == 'https://job-boards.greenhouse.io/' + data.boardToken + '/jobs/' + data.jobId
+        && data.status == 'draft'
+        && validResumeReference(data.resume)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function validV2AnswerContent(data) {
+      return data.keys().hasOnly([
+          'schemaVersion', 'atsJobId', 'fieldKey', 'question', 'fieldType', 'value',
+          'choiceMetadata', 'revision', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'schemaVersion', 'atsJobId', 'fieldKey', 'question', 'fieldType', 'value',
+          'revision', 'createdAt', 'updatedAt'
+        ])
+        && data.schemaVersion == 1
+        && validCanonicalAtsId(data.atsJobId)
+        && data.fieldKey is string && data.fieldKey.size() > 0 && data.fieldKey.size() <= 128
+        && data.fieldKey.matches('^[a-z0-9]+(_[a-z0-9]+)*$')
+        && !data.fieldKey.matches('.*(password|passcode|secret|government|social_security|ssn|sin|date_of_birth|dob|demographic|ethnicity|race|gender|disability|veteran|medical|health|eeo|work_authorization|sponsor|salary|compensation).*')
+        && data.question is string && data.question.size() > 0 && data.question.size() <= 500
+        && data.fieldType in ['text', 'textarea', 'email', 'tel', 'select', 'radio', 'checkbox', 'multiselect', 'other']
+        && validAnswerValue(data)
+        && validChoiceMetadata(data)
+        && data.revision is int && data.revision >= 1 && data.revision <= 2147483647
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function activeV2Memory(userId, atsJobDocumentId) {
+      return exists(/databases/$(database)/documents/users/$(userId)/applicationMemories/$(atsJobDocumentId))
+        && get(/databases/$(database)/documents/users/$(userId)/applicationMemories/$(atsJobDocumentId)).data.schemaVersion == 2
+        && get(/databases/$(database)/documents/users/$(userId)/applicationMemories/$(atsJobDocumentId)).data.atsJobDocumentId == atsJobDocumentId
+        && get(/databases/$(database)/documents/users/$(userId)/applicationMemories/$(atsJobDocumentId)).data.status == 'draft';
+    }
+
+    function answerMatchesParent(userId, atsJobDocumentId, data) {
+      return data.atsJobId == get(/databases/$(database)/documents/users/$(userId)/applicationMemories/$(atsJobDocumentId)).data.atsJobId;
+    }
+
     function validAttemptTransition() {
       return resource.data.status == request.resource.data.status
         || resource.data.status == 'pending'
@@ -234,16 +293,45 @@ service cloud.firestore {
 
     match /users/{userId}/applicationMemories/{atsJobDocumentId} {
       allow read: if isOwner(userId);
+      // V1 parents remain owner-readable but all V1 client writes are frozen.
       allow create: if isOwner(userId)
-        && atsJobDocumentId.matches('^greenhouse%3A[a-z0-9][a-z0-9_-]*%3A[0-9]+$')
-        && validApplicationMemory(request.resource.data);
+        && validV2ApplicationMemory(request.resource.data, atsJobDocumentId);
       allow update: if isOwner(userId)
-        && atsJobDocumentId.matches('^greenhouse%3A[a-z0-9][a-z0-9_-]*%3A[0-9]+$')
-        && validApplicationMemory(request.resource.data)
+        && resource.data.schemaVersion == 2
+        && validV2ApplicationMemory(request.resource.data, atsJobDocumentId)
+        && request.resource.data.schemaVersion == resource.data.schemaVersion
         && request.resource.data.atsJobId == resource.data.atsJobId
+        && request.resource.data.atsJobDocumentId == resource.data.atsJobDocumentId
         && request.resource.data.provider == resource.data.provider
+        && request.resource.data.boardToken == resource.data.boardToken
+        && request.resource.data.jobId == resource.data.jobId
+        && request.resource.data.canonicalUrl == resource.data.canonicalUrl
+        && request.resource.data.status == resource.data.status
         && request.resource.data.createdAt == resource.data.createdAt;
       allow delete: if false;
+
+      match /answers/{fieldKey} {
+        allow read: if isOwner(userId) && activeV2Memory(userId, atsJobDocumentId);
+        // The V2 parent must already exist; parent and initial answers cannot
+        // be created in the same batch under these intermediate rules.
+        allow create: if isOwner(userId)
+          && activeV2Memory(userId, atsJobDocumentId)
+          && validV2AnswerContent(request.resource.data)
+          && request.resource.data.fieldKey == fieldKey
+          && request.resource.data.revision == 1
+          && answerMatchesParent(userId, atsJobDocumentId, request.resource.data);
+        allow update: if isOwner(userId)
+          && activeV2Memory(userId, atsJobDocumentId)
+          && validV2AnswerContent(request.resource.data)
+          && request.resource.data.fieldKey == fieldKey
+          && answerMatchesParent(userId, atsJobDocumentId, request.resource.data)
+          && request.resource.data.schemaVersion == resource.data.schemaVersion
+          && request.resource.data.atsJobId == resource.data.atsJobId
+          && request.resource.data.fieldKey == resource.data.fieldKey
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.revision == resource.data.revision + 1;
+        allow delete: if isOwner(userId) && activeV2Memory(userId, atsJobDocumentId);
+      }
     }
 
     match /users/{userId}/private/{documentId} {
