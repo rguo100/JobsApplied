@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "prod": "appliedyet-prod"
+  },
+  "targets": {},
+  "etags": {}
+}

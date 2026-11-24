@@ -16,3 +16,10 @@ export interface ApplicantProfile {
 }
 
 export type ApplicantProfileInput = Omit<ApplicantProfile, "createdAt" | "updatedAt">;
+
+export type ApplicantProfileField = keyof ApplicantProfileInput;
+
+export interface ApplicantProfileValidation {
+  valid: boolean;
+  errors: Partial<Record<ApplicantProfileField, string>>;
+}

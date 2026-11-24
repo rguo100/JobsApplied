@@ -9,6 +9,10 @@ import {
 } from "./widget/jobMetadata";
 import { WidgetManager } from "./widget/widgetManager";
 import { createAnimationFrameCoalescer } from "./animationFrameCoalescer";
+import {
+  isExternalApplyAction,
+  LinkedInApplyStartedMessage,
+} from "./linkedinApplyDiscovery";
 
 console.log("[AppliedYet] content script initialized");
 
@@ -33,6 +37,22 @@ function notifyJobUpdated(job: Job) {
 
 // Initialize the Day 4 Inline Widget Manager
 const widgetManager = new WidgetManager();
+
+// Capture the user's explicit external Apply action before same-tab navigation
+// can tear down this content script. Easy Apply stays entirely out of scope.
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element) || !isExternalApplyAction(target)) return;
+  const job = extractLinkedInJob(document, window.location.href);
+  if (!job) return;
+  const message: LinkedInApplyStartedMessage = {
+    type: "LINKEDIN_APPLY_STARTED",
+    job,
+  };
+  chrome.runtime.sendMessage(message).catch(() => {
+    // Navigation may dispose the page immediately; the background owns persistence.
+  });
+}, true);
 
 function updateJobExtraction(): Job | null {
   console.log("[AppliedYet] extraction");

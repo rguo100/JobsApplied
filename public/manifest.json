@@ -13,7 +13,8 @@
   },
   "permissions": [
     "activeTab",
-    "identity"
+    "identity",
+    "storage"
   ],
   "oauth2": {
     "client_id": "428495047899-igshtbrlee4j1u9uhmpa92j5pifai48t.apps.googleusercontent.com",
@@ -26,7 +27,11 @@
   "host_permissions": [
     "https://*.linkedin.com/jobs/*",
     "https://*.linkedin.com/jobs/view/*",
-    "https://*.linkedin.com/jobs*"
+    "https://*.linkedin.com/jobs*",
+    "https://job-boards.greenhouse.io/*",
+    "https://firestore.googleapis.com/*",
+    "https://identitytoolkit.googleapis.com/*",
+    "https://securetoken.googleapis.com/*"
   ],
   "content_scripts": [
     {
@@ -36,6 +41,13 @@
         "https://*.linkedin.com/jobs*"
       ],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://job-boards.greenhouse.io/*"
+      ],
+      "js": ["greenhouse.js"],
       "run_at": "document_idle"
     }
   ]

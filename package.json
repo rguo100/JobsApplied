@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "npm run build:extension && npm run build:web",
-    "build:extension": "vite build --config vite.config.ts",
+    "build:extension": "vite build --config vite.config.ts && npm run check:extension-content-scripts",
+    "check:extension-content-scripts": "tsx scripts/checkClassicContentScripts.ts",
     "build:web": "vite build --config vite.web.config.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-web server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx src/types/__tests__/applicationIdentity.test.ts && tsx src/types/__tests__/atsModels.test.ts && tsx src/services/__tests__/v11Repositories.test.ts && tsx src/content/__tests__/linkedinJobExtractor.test.ts && tsx src/content/widget/__tests__/widgetLogic.test.ts && tsx src/content/widget/__tests__/applicationTrackingState.test.ts && tsx src/components/__tests__/popupApplicationState.test.ts && tsx src/content/__tests__/day41Concurrency.test.ts && tsx src/dashboard/__tests__/dashboardLogic.test.ts && tsx src/dashboard/__tests__/dashboardLifecycle.test.ts && tsx src/dashboard/__tests__/dashboardUsability.test.ts && tsx src/services/__tests__/applicationSavePayload.test.ts && tsx src/content/widget/__tests__/metadataRefresh.test.ts && tsx src/context/__tests__/authRecovery.test.ts && tsx src/utils/__tests__/crossSurfaceConsistency.test.ts",
+    "test": "tsx src/types/__tests__/applicationIdentity.test.ts && tsx src/types/__tests__/atsModels.test.ts && tsx src/services/__tests__/v11Repositories.test.ts && tsx src/services/__tests__/applicationMemoryService.test.ts && tsx src/content/__tests__/greenhouseDiscovery.test.ts && tsx src/content/__tests__/greenhouseAutofill.test.ts && tsx src/content/__tests__/linkedinJobExtractor.test.ts && tsx src/content/widget/__tests__/widgetLogic.test.ts && tsx src/content/widget/__tests__/applicationTrackingState.test.ts && tsx src/components/__tests__/popupApplicationState.test.ts && tsx src/content/__tests__/day41Concurrency.test.ts && tsx src/dashboard/__tests__/dashboardLogic.test.ts && tsx src/dashboard/__tests__/dashboardLifecycle.test.ts && tsx src/dashboard/__tests__/dashboardUsability.test.ts && tsx src/services/__tests__/applicationSavePayload.test.ts && tsx src/content/widget/__tests__/metadataRefresh.test.ts && tsx src/context/__tests__/authRecovery.test.ts && tsx src/utils/__tests__/crossSurfaceConsistency.test.ts",
     "test:rules": "firebase emulators:exec --only firestore \"node tests/firestore.rules.test.mjs\""
   },
   "dependencies": {
@@ -37,6 +38,7 @@
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.28.2",
     "firebase-tools": "^13.35.1",
+    "linkedom": "^0.18.13",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2"

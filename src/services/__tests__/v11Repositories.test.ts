@@ -74,6 +74,22 @@ assert.equal(profilePayload.linkedinUrl, "https://www.linkedin.com/in/ada");
 assert.equal("createdAt" in profilePayload, true);
 assert.equal("resume" in profilePayload, false);
 assert.equal("salary" in profilePayload, false);
+
+const profileUpdatePayload = createApplicantProfilePayload(
+  {
+    firstName: "Grace",
+    lastName: "Hopper",
+    email: "grace@example.com",
+    phone: "",
+    city: " New York, NY ",
+  },
+  true,
+  updatedAt
+);
+assert.equal("createdAt" in profileUpdatePayload, false, "updates must preserve the stored createdAt");
+assert.equal(profileUpdatePayload.city, "New York, NY");
+assert.equal("phone" in profileUpdatePayload, false, "empty update fields must not overwrite saved values");
+assert.equal(profileUpdatePayload.updatedAt, updatedAt);
 assert.throws(() =>
   createApplicantProfilePayload(
     { firstName: "", lastName: "Lovelace", email: "ada@example.com" },

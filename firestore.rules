@@ -58,6 +58,89 @@ service cloud.firestore {
         && (!('portfolioUrl' in data) || data.portfolioUrl is string);
     }
 
+    function validBoundedStringList(values) {
+      return values is list && values.size() <= 10;
+    }
+
+    function validChoices(options) {
+      return options is list && options.size() <= 10;
+    }
+
+    function validChoiceMetadata(answer) {
+      return !('choiceMetadata' in answer)
+        || (answer.choiceMetadata is map
+          && answer.choiceMetadata.keys().hasOnly(['options'])
+          && answer.choiceMetadata.keys().hasAll(['options'])
+          && validChoices(answer.choiceMetadata.options));
+    }
+
+    function validAnswerValue(answer) {
+      return ((answer.fieldType in ['text', 'textarea', 'email', 'tel', 'select', 'radio', 'other'])
+          && answer.value is string && answer.value.size() <= 4000)
+        || (answer.fieldType == 'checkbox'
+          && (answer.value is bool || validBoundedStringList(answer.value)))
+        || (answer.fieldType == 'multiselect' && validBoundedStringList(answer.value));
+    }
+
+    function validSavedAnswer(answer) {
+      return answer is map
+        && answer.keys().hasOnly(['fieldKey', 'question', 'fieldType', 'value', 'choiceMetadata'])
+        && answer.keys().hasAll(['fieldKey', 'question', 'fieldType', 'value'])
+        && answer.fieldKey is string && answer.fieldKey.size() > 0 && answer.fieldKey.size() <= 128
+        && answer.fieldKey.matches('^[a-z0-9]+(_[a-z0-9]+)*$')
+        && !answer.fieldKey.matches('.*(password|passcode|secret|government|social_security|ssn|sin|date_of_birth|dob|demographic|ethnicity|race|gender|disability|veteran|medical|health|eeo|work_authorization|sponsor|salary|compensation).*')
+        && answer.question is string && answer.question.size() > 0 && answer.question.size() <= 500
+        && answer.fieldType in ['text', 'textarea', 'email', 'tel', 'select', 'radio', 'checkbox', 'multiselect', 'other']
+        && validAnswerValue(answer)
+        && validChoiceMetadata(answer);
+    }
+
+    function validSavedAnswers(answers) {
+      return answers is list && answers.size() <= 10
+        && (answers.size() <= 0 || validSavedAnswer(answers[0]))
+        && (answers.size() <= 1 || validSavedAnswer(answers[1]))
+        && (answers.size() <= 2 || validSavedAnswer(answers[2]))
+        && (answers.size() <= 3 || validSavedAnswer(answers[3]))
+        && (answers.size() <= 4 || validSavedAnswer(answers[4]))
+        && (answers.size() <= 5 || validSavedAnswer(answers[5]))
+        && (answers.size() <= 6 || validSavedAnswer(answers[6]))
+        && (answers.size() <= 7 || validSavedAnswer(answers[7]))
+        && (answers.size() <= 8 || validSavedAnswer(answers[8]))
+        && (answers.size() <= 9 || validSavedAnswer(answers[9]));
+    }
+
+    function validResumeReference(resume) {
+      return resume == null
+        || (resume is map
+          && resume.keys().hasOnly(['fileName', 'fileSize', 'mimeType', 'storageStatus', 'storagePath'])
+          && resume.keys().hasAll(['fileName', 'storageStatus', 'storagePath'])
+          && resume.fileName is string && resume.fileName.size() > 0 && resume.fileName.size() <= 255
+          && (!('fileSize' in resume) || (resume.fileSize is int && resume.fileSize >= 0 && resume.fileSize <= 52428800))
+          && (!('mimeType' in resume) || (resume.mimeType is string && resume.mimeType.size() > 0 && resume.mimeType.size() <= 128))
+          && resume.storageStatus == 'reference_only'
+          && resume.storagePath == null);
+    }
+
+    function validApplicationMemory(data) {
+      return data.keys().hasOnly([
+          'schemaVersion', 'atsJobId', 'provider', 'canonicalUrl', 'status',
+          'answers', 'resume', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'schemaVersion', 'atsJobId', 'provider', 'canonicalUrl', 'status',
+          'answers', 'resume', 'createdAt', 'updatedAt'
+        ])
+        && data.schemaVersion == 1
+        && validCanonicalAtsId(data.atsJobId)
+        && data.provider == 'greenhouse'
+        && data.canonicalUrl is string && data.canonicalUrl.size() > 0 && data.canonicalUrl.size() <= 2048
+        && data.status == 'draft'
+        && validSavedAnswers(data.answers)
+        && validResumeReference(data.resume)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function validAttemptTransition() {
       return resource.data.status == request.resource.data.status
         || resource.data.status == 'pending'
@@ -146,6 +229,20 @@ service cloud.firestore {
         && request.resource.data.updatedAt is timestamp
         && validAttemptTransition()
         && validAttemptOutcome(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /users/{userId}/applicationMemories/{atsJobDocumentId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId)
+        && atsJobDocumentId.matches('^greenhouse%3A[a-z0-9][a-z0-9_-]*%3A[0-9]+$')
+        && validApplicationMemory(request.resource.data);
+      allow update: if isOwner(userId)
+        && atsJobDocumentId.matches('^greenhouse%3A[a-z0-9][a-z0-9_-]*%3A[0-9]+$')
+        && validApplicationMemory(request.resource.data)
+        && request.resource.data.atsJobId == resource.data.atsJobId
+        && request.resource.data.provider == resource.data.provider
+        && request.resource.data.createdAt == resource.data.createdAt;
       allow delete: if false;
     }
 

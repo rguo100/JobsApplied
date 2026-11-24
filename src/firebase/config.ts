@@ -3,7 +3,11 @@ import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
 // It initializes Auth with IndexedDB persistence and excludes browser popup/
 // redirect dependencies that are incompatible with extension CSP.
 import { getAuth, Auth } from "firebase/auth/web-extension";
-import { getFirestore, Firestore } from "firebase/firestore";
+import { initializeFirestore, Firestore } from "firebase/firestore";
+import {
+  getFirestore as getLiteFirestore,
+  Firestore as LiteFirestore,
+} from "firebase/firestore/lite";
 
 const metaEnv = typeof import.meta !== "undefined" && import.meta.env ? import.meta.env : ({} as Record<string, string | undefined>);
 
@@ -32,20 +36,29 @@ export function isFirebaseConfigured(): boolean {
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
+let profileDb: LiteFirestore | null = null;
 
 try {
   if (isFirebaseConfigured()) {
     app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
     auth = getAuth(app);
-    db = getFirestore(app);
+    // MV3 service workers can be suspended between requests and do not provide
+    // the same streaming environment as a normal page.
+    db = initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
+    // Applicant profile operations are one-shot reads/writes. Firestore Lite's
+    // browser transport uses fetch and does not depend on XMLHttpRequest,
+    // which is absent in Manifest V3 service workers.
+    profileDb = getLiteFirestore(app);
     console.info("[AppliedYet Auth] Firebase initialized", {
       projectId: app.options.projectId,
       authDomain: app.options.authDomain,
       authPersistence: "indexedDBLocalPersistence (web-extension default)",
+      firestoreTransport: "auto-detect-long-polling",
+      profileFirestoreTransport: "firestore-lite-fetch",
     });
   }
 } catch (err) {
   console.error("[AppliedYet Auth] Firebase initialization failed", err);
 }
 
-export { app, auth, db };
+export { app, auth, db, profileDb };

@@ -179,12 +179,23 @@ assert(!shadow.innerHTML.includes(">Applied<"), "Widget must NOT display 'Applie
 console.log("✓ PASS: Requirement: LinkedIn inline widget renders dynamic status (Applied, Interview, Rejected, Offer)");
 
 // ----------------------------------------------------
-// 4. INVARIANT: No new Chrome permissions added
+// 4. INVARIANT: Chrome permissions remain at the V1.1 minimum
 // ----------------------------------------------------
 const manifestPath = path.resolve(process.cwd(), "public/manifest.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
-assert.deepEqual(manifest.permissions, ["activeTab", "identity"], "Chrome permissions must remain activeTab and identity only");
-console.log("✓ PASS: Requirement: Confirmed no new Chrome permissions required");
+assert.deepEqual(
+  manifest.permissions,
+  ["activeTab", "identity", "storage"],
+  "Chrome permissions must remain limited to activeTab, identity, and discovery-session storage"
+);
+for (const firebaseHost of [
+  "https://firestore.googleapis.com/*",
+  "https://identitytoolkit.googleapis.com/*",
+  "https://securetoken.googleapis.com/*",
+]) {
+  assert.ok(manifest.host_permissions.includes(firebaseHost), `Missing Firebase host permission: ${firebaseHost}`);
+}
+console.log("✓ PASS: Requirement: Confirmed Chrome permissions remain minimal");
 
 // ----------------------------------------------------
 // 5. INVARIANT: No Firestore schema change
