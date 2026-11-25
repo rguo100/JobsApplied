@@ -15,6 +15,32 @@ import { Application, ApplicationStatus, getApplicationDocId } from "../types/ap
 import type { Job } from "../types/job";
 import { createApplicationStatusUpdate } from "./applicationStatusUpdate";
 import { createApplicationSavePayload } from "./applicationSavePayload";
+import { upsertAtsJob } from "./atsJobService";
+import { confirmSubmissionAttempt, createSubmissionAttempt } from "./submissionAttemptService";
+
+async function ensureGreenhouseAtsJob(uid: string, job: Job): Promise<void> {
+  if (job.source !== "greenhouse") return;
+  await upsertAtsJob(uid, {
+    atsJobId: job.externalJobId,
+    canonicalUrl: job.url,
+    company: job.company,
+    title: job.title,
+  });
+}
+
+async function recordGreenhouseManualConfirmation(uid: string, job: Job): Promise<void> {
+  if (job.source !== "greenhouse") return;
+  // One idempotent manual-confirmation attempt per canonical job. This is an
+  // audit of the user's explicit confirmation, never a submission action.
+  const attemptId = `manual_${getApplicationDocId("greenhouse", job.externalJobId)}`;
+  await createSubmissionAttempt(uid, {
+    attemptId,
+    atsJobId: job.externalJobId,
+    linkedInPostingIds: [],
+    userConfirmed: true,
+  });
+  await confirmSubmissionAttempt(uid, attemptId, { method: "manual" });
+}
 
 function isFallbackCompany(company?: string | null): boolean {
   if (!company) return true;
@@ -168,6 +194,8 @@ export async function markJobAsApplied(uid: string, job: Job): Promise<void> {
     throw new Error("Cannot track job without valid externalJobId.");
   }
 
+  await ensureGreenhouseAtsJob(uid, job);
+  await recordGreenhouseManualConfirmation(uid, job);
   const docRef = getApplicationDocRef(uid, job.source, job.externalJobId);
   const existingSnap = await getDoc(docRef);
   const existingApplication = existingSnap.exists()
@@ -191,7 +219,7 @@ export async function markJobAsApplied(uid: string, job: Job): Promise<void> {
     : (!isFallbackTitle(existingTitle) ? existingTitle! : (job.title || "Job Title"));
 
   const payload: WithFieldValue<Application> = {
-    source: "linkedin",
+    source: job.source,
     externalJobId: job.externalJobId,
     company,
     title,
@@ -201,9 +229,46 @@ export async function markJobAsApplied(uid: string, job: Job): Promise<void> {
     appliedAt: existingApplication?.appliedAt || serverTimestamp(),
     createdAt: existingApplication?.createdAt || serverTimestamp(),
     updatedAt: serverTimestamp(),
+    ...(job.source === "greenhouse" ? {
+      trackingVersion: 2,
+      atsJobId: job.externalJobId,
+      atsProvider: "greenhouse" as const,
+      atsUrl: job.url,
+    } : {}),
   };
 
   await setDoc(docRef, payload, { merge: true });
+}
+
+/**
+ * Saves a job as an in-progress record. This deliberately does not set
+ * appliedAt: only an explicit Mark as Applied confirmation can do that.
+ */
+export async function saveJobAsInProgress(uid: string, job: Job): Promise<void> {
+  if (!isFirebaseConfigured() || !db || !uid) {
+    throw new Error("Firebase is not configured or user is unauthenticated.");
+  }
+  if (!job.externalJobId) {
+    throw new Error("Cannot track job without valid externalJobId.");
+  }
+
+  await ensureGreenhouseAtsJob(uid, job);
+  await saveApplication(uid, {
+    source: job.source,
+    externalJobId: job.externalJobId,
+    company: job.company,
+    title: job.title,
+    location: job.location,
+    url: job.url,
+    status: "saved",
+    appliedAt: null,
+    ...(job.source === "greenhouse" ? {
+      trackingVersion: 2,
+      atsJobId: job.externalJobId,
+      atsProvider: "greenhouse" as const,
+      atsUrl: job.url,
+    } : {}),
+  });
 }
 
 /**

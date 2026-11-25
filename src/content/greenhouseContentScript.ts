@@ -11,6 +11,7 @@ import type {
   GreenhouseProfileResponse,
   GreenhouseProfileSaveMessage,
 } from "../types/greenhouse";
+import type { ExtensionMessage, Job } from "../types/job";
 
 export const GREENHOUSE_AUTOFILL_ROOT_ID = "appliedyet-greenhouse-autofill";
 const MESSAGE_TIMEOUT_MS = 7000;
@@ -30,6 +31,25 @@ const PROFILE_FIELDS: Array<{ key: keyof ApplicantProfileInput; label: string; t
 
 const hostsByDocument = new WeakMap<Document, HTMLElement>();
 const monitorsByDocument = new WeakMap<Document, { host: HTMLElement; disconnect: () => void }>();
+
+/** Read-only page metadata for the popup. The page remains the authority for
+ * user edits; this never writes into the Greenhouse form or to Firestore. */
+export function extractGreenhouseJobMetadata(doc: Document = document): Job | null {
+  const detection = detectGreenhouseJob(doc.defaultView?.location?.href || window.location.href);
+  if (!detection) return null;
+  const text = (selector: string): string => (doc.querySelector(selector)?.textContent || "").trim();
+  const title = text("h1") || doc.title.replace(/\s*\|\s*Greenhouse.*$/i, "").trim() || "Job title";
+  const location = text(".job__location") || text("[data-qa='job-location']") || text(".location") || "Location not specified";
+  const company = text("[data-qa='company-name']") || text(".company-name") || detection.identity.boardToken;
+  return {
+    source: "greenhouse",
+    externalJobId: detection.identity.canonicalId,
+    company,
+    title,
+    location,
+    url: detection.canonicalUrl,
+  };
+}
 
 interface HostRemountOptions {
   maxRemounts?: number;
@@ -293,3 +313,11 @@ export function initializeGreenhouseAutofill(doc: Document = document): ShadowRo
 
 try { initializeGreenhouseAutofill(); }
 catch (error) { console.error("[AppliedYet Greenhouse] Startup failed", error); }
+
+if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+    if (message.type === "GET_GREENHOUSE_JOB") {
+      sendResponse({ type: "GREENHOUSE_JOB_RESPONSE", job: extractGreenhouseJobMetadata() });
+    }
+  });
+}

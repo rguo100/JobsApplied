@@ -238,6 +238,34 @@ try {
   }));
   assert.equal((await getDoc(oldApplicationRef)).exists(), true);
 
+  // Universal tracking continues to use the owner-scoped applications
+  // collection. Greenhouse uses its canonical ATS identity; an ordinary web
+  // job keeps its full, job-significant URL identity.
+  const greenhouseApplicationRef = doc(userA, "users", "user-a", "applications", "greenhouse_greenhouse_affirm_8057950003");
+  await assertSucceeds(setDoc(greenhouseApplicationRef, {
+    source: "greenhouse",
+    externalJobId: "greenhouse:affirm:8057950003",
+    company: "Affirm",
+    title: "Software Engineer",
+    location: "Remote",
+    url: "https://job-boards.greenhouse.io/affirm/jobs/8057950003",
+    status: "applied",
+    atsJobId: "greenhouse:affirm:8057950003",
+    atsProvider: "greenhouse",
+  }));
+  const webApplicationRef = doc(userA, "users", "user-a", "applications", "web_https%3A%2F%2Fcareers.example.test%2Fjobs%2F42%3Freq%3Dabc");
+  await assertSucceeds(setDoc(webApplicationRef, {
+    source: "web",
+    externalJobId: "https://careers.example.test/jobs/42?req=abc",
+    company: "Example",
+    title: "Engineer",
+    location: "Location not specified",
+    url: "https://careers.example.test/jobs/42?req=abc",
+    status: "saved",
+  }));
+  await assertFails(getDoc(doc(userB, "users", "user-a", "applications", greenhouseApplicationRef.id)));
+  await assertFails(getDoc(doc(anonymous, "users", "user-a", "applications", webApplicationRef.id)));
+
   console.log("Firestore Security Rules emulator tests passed.");
 } finally {
   await env.cleanup();

@@ -1,7 +1,7 @@
 import { Application } from "./application";
 
 export interface Job {
-  source: "linkedin";
+  source: "linkedin" | "greenhouse" | "web";
   externalJobId: string;
   title: string;
   company: string;
@@ -18,6 +18,8 @@ export interface MutationIdentity {
 export type ExtensionMessage =
   | { type: "GET_CURRENT_JOB" }
   | { type: "CURRENT_JOB_RESPONSE"; job: Job | null }
+  | { type: "GET_GREENHOUSE_JOB" }
+  | { type: "GREENHOUSE_JOB_RESPONSE"; job: Job | null }
   | { type: "JOB_UPDATED"; job: Job | null }
   // Content ↔ Background Bridge messages for Day 4 Inline Widget
   | { type: "AUTH_STATE_REQUEST" }

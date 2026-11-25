@@ -19,6 +19,34 @@ export interface SummaryCounts {
 }
 
 /**
+ * A LinkedIn document joins a Greenhouse job only through a verified ATS
+ * association. When both representations exist, keep one dashboard row and
+ * one statistics contribution while leaving both historical documents intact.
+ */
+export function deduplicateVerifiedAtsApplications(applications: Application[]): Application[] {
+  const result: Application[] = [];
+  const byAtsJobId = new Map<string, number>();
+  for (const app of applications) {
+    const atsJobId = app.atsProvider === "greenhouse" && app.atsJobId ? app.atsJobId : null;
+    if (!atsJobId || (app.source !== "linkedin" && app.source !== "greenhouse")) {
+      result.push(app);
+      continue;
+    }
+    const existingIndex = byAtsJobId.get(atsJobId);
+    if (existingIndex === undefined) {
+      byAtsJobId.set(atsJobId, result.length);
+      result.push(app);
+      continue;
+    }
+    const existing = result[existingIndex];
+    if (getApplicationTimestampMillis(app) > getApplicationTimestampMillis(existing)) {
+      result[existingIndex] = app;
+    }
+  }
+  return result;
+}
+
+/**
  * Extracts a comparable timestamp in milliseconds from an application record.
  * Prioritizes `appliedAt`, falling back to `createdAt` or 0 if neither is set.
  */

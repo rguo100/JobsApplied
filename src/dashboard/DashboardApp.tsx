@@ -24,6 +24,7 @@ import {
 import {
   SortOption,
   calculateSummaryCounts,
+  deduplicateVerifiedAtsApplications,
   extractUniqueCompanies,
   filterAndSortApplications,
   sanitizeDashboardErrorMessage,
@@ -57,7 +58,10 @@ export const DashboardApp: React.FC = () => {
 
   const currentUid = user?.uid ?? null;
   const visibleDashboardData = getDashboardDataForUid(dashboardData, currentUid);
-  const applications = visibleDashboardData.applications;
+  const applications = useMemo(
+    () => deduplicateVerifiedAtsApplications(visibleDashboardData.applications),
+    [visibleDashboardData.applications]
+  );
   const dataLoading = visibleDashboardData.loading;
   const syncError = visibleDashboardData.error;
   const visiblePendingDelete = getPendingDeleteForUid(pendingDelete, currentUid);

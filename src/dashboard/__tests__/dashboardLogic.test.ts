@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { formatApplicationDate } from "../utils/formatApplicationDate";
 import { getApplicationIdentity, getApplicationDocId, Application, ApplicationStatus } from "../../types/application";
+import { deduplicateVerifiedAtsApplications, calculateSummaryCounts } from "../utils/dashboardFilter";
 
 interface MockFirestoreTimestamp {
   seconds: number;
@@ -271,4 +272,26 @@ console.log("Running Day 5 Web Dashboard unit tests...");
   console.log("✓ PASS: Test 9: Sparse and malformed fields render safe fallbacks without throwing");
 }
 
-console.log("\nAll 9 Day 5 Web Dashboard unit tests PASSED successfully.");
+// Universal tracking: an explicitly linked LinkedIn posting and its direct
+// Greenhouse record have one visible/statistical representation, while an
+// unrelated external job remains separate.
+{
+  const earlier = createMockTimestamp(new Date(2026, 8, 20)) as any;
+  const later = createMockTimestamp(new Date(2026, 8, 21)) as any;
+  const linkedIn: Application = {
+    source: "linkedin", externalJobId: "123", company: "Affirm", title: "Engineer", location: "Remote",
+    url: "https://www.linkedin.com/jobs/view/123/", status: "applied", appliedAt: earlier, createdAt: earlier, updatedAt: earlier,
+    atsProvider: "greenhouse", atsJobId: "greenhouse:affirm:8057950003",
+  };
+  const greenhouse: Application = {
+    ...linkedIn, source: "greenhouse", externalJobId: "greenhouse:affirm:8057950003",
+    url: "https://job-boards.greenhouse.io/affirm/jobs/8057950003", updatedAt: later,
+  };
+  const unrelated: Application = { ...linkedIn, source: "web", externalJobId: "https://careers.example.test/jobs/1", atsJobId: undefined, atsProvider: undefined };
+  const visible = deduplicateVerifiedAtsApplications([linkedIn, greenhouse, unrelated]);
+  assert.equal(visible.length, 2, "Linked ATS representations must not create duplicate rows");
+  assert.equal(calculateSummaryCounts(visible).total, 2, "Linked ATS representations must not inflate statistics");
+  console.log("✓ PASS: Test 10: Linked Greenhouse and LinkedIn records are deduplicated without merging unrelated jobs");
+}
+
+console.log("\nAll 10 Day 5 Web Dashboard unit tests PASSED successfully.");

@@ -1,6 +1,7 @@
 import {
   getApplicationIdentity,
   getApplicationDocId,
+  normalizeWebJobUrl,
 } from "../application";
 
 interface TestCase {
@@ -113,6 +114,37 @@ const tests: TestCase[] = [
       }
       if (identity.documentId !== "linkedin_3981_726450") {
         throw new Error(`Expected sanitized documentId 'linkedin_3981_726450', got '${identity.documentId}'`);
+      }
+    },
+  },
+  {
+    name: "Scenario 8: Greenhouse canonical identity stays distinct from LinkedIn",
+    run: () => {
+      const identity = getApplicationIdentity("greenhouse", "greenhouse:affirm:8057950003");
+      if (identity.source !== "greenhouse" || identity.documentId === getApplicationDocId("linkedin", "greenhouse:affirm:8057950003")) {
+        throw new Error("Greenhouse identity must remain source-distinct.");
+      }
+    },
+  },
+  {
+    name: "Scenario 9: Generic URL identity preserves job-significant query parameters",
+    run: () => {
+      const firstUrl = "https://careers.example.test/job/42?req=a_b";
+      const secondUrl = "https://careers.example.test/job/42?req=a%2Fb";
+      if (getApplicationDocId("web", firstUrl) === getApplicationDocId("web", secondUrl)) {
+        throw new Error("Distinct job-significant query values must not collide.");
+      }
+      if (getApplicationDocId("web", firstUrl) !== getApplicationDocId("web", firstUrl)) {
+        throw new Error("Generic URL identity must be deterministic.");
+      }
+    },
+  },
+  {
+    name: "Scenario 10: Generic URL identity ignores hash-only navigation",
+    run: () => {
+      const base = "https://careers.example.test/job/42?req=abc";
+      if (normalizeWebJobUrl(`${base}#description`) !== base) {
+        throw new Error("Hash-only navigation must not create a second job identity.");
       }
     },
   },

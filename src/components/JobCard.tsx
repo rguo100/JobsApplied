@@ -18,6 +18,7 @@ import { getApplicationStatusLabel } from "../utils/applicationStatus";
 
 interface JobCardProps {
   job: Job | null;
+  onJobChange?: (job: Job | null) => void;
   loading: boolean;
   isLinkedInPage: boolean;
   onRefresh: () => void;
@@ -27,6 +28,7 @@ interface JobCardProps {
   applicationError: string | null;
   isMutating: boolean;
   onMarkApplied: () => Promise<void>;
+  onSaveInProgress: () => Promise<void>;
   onUndo: () => Promise<void>;
   onClearError?: () => void;
 }
@@ -50,6 +52,7 @@ function formatApplicationDate(timestamp: Timestamp | null | undefined): string 
 
 export const JobCard: React.FC<JobCardProps> = ({
   job,
+  onJobChange,
   loading,
   isLinkedInPage,
   onRefresh,
@@ -58,6 +61,7 @@ export const JobCard: React.FC<JobCardProps> = ({
   applicationError,
   isMutating,
   onMarkApplied,
+  onSaveInProgress,
   onUndo,
   onClearError,
 }) => {
@@ -72,7 +76,7 @@ export const JobCard: React.FC<JobCardProps> = ({
     return (
       <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
         <div className="w-8 h-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mb-3"></div>
-        <p className="text-sm font-medium text-slate-600">Detecting LinkedIn job details...</p>
+        <p className="text-sm font-medium text-slate-600">Detecting job details...</p>
       </div>
     );
   }
@@ -83,12 +87,12 @@ export const JobCard: React.FC<JobCardProps> = ({
       <div className="p-4 text-center bg-slate-50 border border-slate-200 rounded-xl my-2">
         <AlertCircle className="w-8 h-8 text-amber-500 mx-auto mb-2" />
         <h3 className="text-sm font-semibold text-slate-800 mb-1">
-          Open a LinkedIn job to get started
+          Open a specific job posting to get started
         </h3>
         <p className="text-xs text-slate-500 mb-3">
           {isLinkedInPage
             ? "Select or navigate to a specific job posting on LinkedIn to inspect."
-            : "Navigate to linkedin.com/jobs to view and track your applications."}
+            : "Navigate to a specific job posting to track it manually."}
         </p>
         <button
           onClick={onRefresh}
@@ -103,6 +107,7 @@ export const JobCard: React.FC<JobCardProps> = ({
   const isTracked = isPopupApplicationTracked(application);
   const currentStatus = application?.status || "applied";
   const statusLabel = getApplicationStatusLabel(currentStatus);
+  const sourceLabel = job.source === "linkedin" ? "LinkedIn" : job.source === "greenhouse" ? "Greenhouse" : "Website";
 
   const getStatusContainerClasses = () => {
     if (applicationLoading) return "bg-slate-50 border-slate-200";
@@ -173,12 +178,24 @@ export const JobCard: React.FC<JobCardProps> = ({
             <span className="truncate">{job.company}</span>
           </div>
           <h2 className="text-base font-bold text-slate-900 leading-snug break-words">
-            {job.title}
+            {job.source === "linkedin" ? job.title : <input aria-label="Job title" placeholder="Job title" className="w-full border rounded px-1" value={job.title} onChange={(event) => onJobChange?.({ ...job, title: event.target.value })} />}
           </h2>
         </div>
 
+        {job.source !== "linkedin" && (
+          <div className="space-y-2 text-xs">
+            <input aria-label="Company" className="w-full border rounded px-2 py-1" value={job.company} onChange={(event) => onJobChange?.({ ...job, company: event.target.value })} />
+            <input aria-label="Location" className="w-full border rounded px-2 py-1" value={job.location} onChange={(event) => onJobChange?.({ ...job, location: event.target.value })} />
+            <input aria-label="Job URL" className="w-full border rounded px-2 py-1" value={job.url} onChange={(event) => onJobChange?.({ ...job, url: event.target.value })} />
+          </div>
+        )}
+
         {/* Location & Job ID */}
         <div className="grid grid-cols-1 gap-2 pt-2 border-t border-slate-100 text-xs text-slate-600">
+          <div className="flex items-center gap-2">
+            <Briefcase className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span>Source: {sourceLabel}</span>
+          </div>
           <div className="flex items-center gap-2">
             <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <span className="truncate">{job.location}</span>
@@ -314,36 +331,53 @@ export const JobCard: React.FC<JobCardProps> = ({
               </div>
             </div>
           ) : (
+            <div className={currentStatus === "saved" ? "grid grid-cols-2 gap-2" : ""}>
+              {currentStatus === "saved" && (
+                <button
+                  type="button"
+                  disabled={isMutating || applicationLoading}
+                  onClick={onMarkApplied}
+                  className="py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white transition-all active:scale-[0.99] cursor-pointer"
+                >
+                  <Briefcase className="w-3.5 h-3.5" />
+                  <span>Mark as Applied</span>
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={isMutating || applicationLoading}
+                onClick={() => setConfirmingUndo(true)}
+                className={`${currentStatus === "saved" ? "" : "w-full"} py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 transition-all shadow-2xs active:scale-[0.99] cursor-pointer`}
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                <span>Undo</span>
+              </button>
+            </div>
+          )
+        ) : (
+          /* Untracked state: confirmation and draft are distinct actions. */
+          <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
               disabled={isMutating || applicationLoading}
-              onClick={() => setConfirmingUndo(true)}
-              className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 transition-all shadow-2xs active:scale-[0.99] cursor-pointer"
+              onClick={onSaveInProgress}
+              className="py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 bg-white hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed border border-slate-300 text-slate-700 transition-all active:scale-[0.99] cursor-pointer"
             >
-              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-              <span>Undo</span>
+              <span>Save In Progress</span>
             </button>
-          )
-        ) : (
-          /* Not Applied State: Shows Mark as Applied */
-          <button
-            type="button"
-            disabled={isMutating || applicationLoading}
-            onClick={onMarkApplied}
-            className="w-full py-2.5 px-4 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white shadow-sm shadow-indigo-200 transition-all active:scale-[0.99] cursor-pointer"
-          >
-            {isMutating ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Saving application...</span>
-              </>
-            ) : (
-              <>
-                <Briefcase className="w-4 h-4" />
-                <span>Mark as Applied</span>
-              </>
-            )}
-          </button>
+            <button
+              type="button"
+              disabled={isMutating || applicationLoading}
+              onClick={onMarkApplied}
+              className="py-2.5 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white shadow-sm shadow-indigo-200 transition-all active:scale-[0.99] cursor-pointer"
+            >
+              {isMutating ? (
+                <><RefreshCw className="w-4 h-4 animate-spin" /><span>Saving...</span></>
+              ) : (
+                <><Briefcase className="w-4 h-4" /><span>Mark as Applied</span></>
+              )}
+            </button>
+          </div>
         )}
       </div>
     </div>

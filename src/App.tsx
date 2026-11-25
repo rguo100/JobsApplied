@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Job, ExtensionMessage } from "./types/job";
-import { Application } from "./types/application";
+import { Application, normalizeWebJobUrl } from "./types/application";
 import { JobCard } from "./components/JobCard";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import {
   subscribeToApplication,
   markJobAsApplied,
+  saveJobAsInProgress,
   deleteApplication,
 } from "./services/applicationService";
 import {
@@ -91,7 +92,43 @@ function PopupContent() {
 
           if (!onLinkedIn) {
             setJobLoading(false);
-            setJob(null);
+            try {
+              const currentUrl = new URL(activeTab.url);
+              if (!["http:", "https:"].includes(currentUrl.protocol)) throw new Error("Unsupported tab");
+              const greenhouse = currentUrl.hostname === "job-boards.greenhouse.io"
+                ? currentUrl.pathname.match(/^\/([^/]+)\/jobs\/(\d+)\/?$/)
+                : null;
+              const source = greenhouse ? "greenhouse" : "web";
+              const externalJobId = greenhouse
+                ? `greenhouse:${decodeURIComponent(greenhouse[1]).toLowerCase()}:${greenhouse[2]}`
+                : normalizeWebJobUrl(currentUrl.href);
+              const jobUrl = greenhouse
+                ? `https://job-boards.greenhouse.io/${decodeURIComponent(greenhouse[1]).toLowerCase()}/jobs/${greenhouse[2]}`
+                : currentUrl.href;
+              const fallbackJob: Job = {
+                source,
+                externalJobId,
+                company: greenhouse ? greenhouse[1] : currentUrl.hostname.replace(/^www\./, ""),
+                // Generic pages are manual tracking only. A browser-tab title
+                // is not reliable evidence that a careers listing is one job.
+                title: greenhouse ? (activeTab.title || "Job title") : "",
+                location: "Location not specified",
+                url: jobUrl,
+              };
+              if (greenhouse) {
+                chrome.tabs.sendMessage(activeTab.id, { type: "GET_GREENHOUSE_JOB" } as ExtensionMessage, (response) => {
+                  if (chrome.runtime?.lastError || response?.type !== "GREENHOUSE_JOB_RESPONSE" || !response.job) {
+                    setJob(fallbackJob);
+                    return;
+                  }
+                  setJob(response.job);
+                });
+              } else {
+                setJob(fallbackJob);
+              }
+            } catch {
+              setJob(null);
+            }
             return;
           }
 
@@ -218,7 +255,18 @@ function PopupContent() {
       return;
     }
     if (!job || !job.externalJobId) {
-      setApplicationError("No active LinkedIn job detected.");
+      setApplicationError("No active job detected.");
+      return;
+    }
+    if (!job.company.trim() || !job.title.trim()) {
+      setApplicationError("Company and job title are required.");
+      return;
+    }
+    try {
+      const url = new URL(job.url);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error("Invalid URL");
+    } catch {
+      setApplicationError("A valid HTTP or HTTPS job URL is required.");
       return;
     }
     if (isMutating) {
@@ -244,6 +292,59 @@ function PopupContent() {
       setIsMutating(false);
     }
   };
+
+  const handleSaveInProgress = async () => {
+    if (!user) {
+      setApplicationError("Please sign in with Google to track applications.");
+      return;
+    }
+    if (!job || !job.externalJobId) {
+      setApplicationError("No active job detected.");
+      return;
+    }
+    if (!job.company.trim() || !job.title.trim()) {
+      setApplicationError("Company and job title are required.");
+      return;
+    }
+    try {
+      const url = new URL(job.url);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error("Invalid URL");
+    } catch {
+      setApplicationError("A valid HTTP or HTTPS job URL is required.");
+      return;
+    }
+    if (isMutating) return;
+
+    const targetJob = job;
+    const targetJobId = job.externalJobId;
+    setIsMutating(true);
+    setApplicationError(null);
+    try {
+      await saveJobAsInProgress(user.uid, targetJob);
+    } catch (err: unknown) {
+      if (currentActiveJobIdRef.current === targetJobId) {
+        setApplicationError(err instanceof Error ? err.message : "Failed to save application progress.");
+      }
+    } finally {
+      setIsMutating(false);
+    }
+  };
+
+  const handleJobChange = useCallback((nextJob: Job | null) => {
+    if (!nextJob) {
+      setJob(null);
+      return;
+    }
+    if (nextJob.source === "web") {
+      try {
+        setJob({ ...nextJob, url: normalizeWebJobUrl(nextJob.url), externalJobId: normalizeWebJobUrl(nextJob.url) });
+        return;
+      } catch {
+        // Keep the typed URL visible so the normal validation message can explain it.
+      }
+    }
+    setJob(nextJob);
+  }, []);
 
   // Core Action: Undo (Delete application record)
   const handleUndo = async () => {
@@ -301,7 +402,7 @@ function PopupContent() {
                 AppliedYet
               </h1>
               <span className="text-[10px] text-slate-500 font-medium tracking-wide">
-                LinkedIn Application Tracker
+                Application Tracker
               </span>
             </div>
           </div>
@@ -423,6 +524,7 @@ function PopupContent() {
             {/* Job Details & Application Tracker Card */}
             <JobCard
               job={job}
+              onJobChange={handleJobChange}
               loading={jobLoading}
               isLinkedInPage={isLinkedInPage}
               onRefresh={fetchActiveTabJob}
@@ -431,6 +533,7 @@ function PopupContent() {
               applicationError={applicationError}
               isMutating={isMutating}
               onMarkApplied={handleMarkAsApplied}
+              onSaveInProgress={handleSaveInProgress}
               onUndo={handleUndo}
               onClearError={() => setApplicationError(null)}
             />
